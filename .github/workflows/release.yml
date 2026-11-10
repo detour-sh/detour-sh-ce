@@ -82,6 +82,30 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
+      - run: mkdir -p release
+
+      - name: Generate SBOM for release
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: release/detour-sh-ce-${{ github.ref_name }}.sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Sign release files
+        env:
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cd release
+          echo "${IMAGE}@${DIGEST}" > "detour-sh-ce-${TAG}.image.txt"
+          sha256sum detour-sh-ce-* > "detour-sh-ce-${TAG}.SHA256SUMS"
+          for file in "detour-sh-ce-${TAG}.SHA256SUMS" "detour-sh-ce-${TAG}.sbom.cdx.json"; do
+            cosign sign-blob --yes "$file" --bundle "$file.sigstore.json" --output-signature "$file.sig"
+          done
+          ls -l
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -110,5 +134,14 @@ jobs:
             echo "  --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
+            echo
+            echo "The SBOM and checksums attached below are signed the same way. Verify one with:"
+            echo
+            echo '```'
+            echo "cosign verify-blob detour-sh-ce-${TAG}.SHA256SUMS \\"
+            echo "  --bundle detour-sh-ce-${TAG}.SHA256SUMS.sigstore.json \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
           } >> notes.md
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md --verify-tag
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md --verify-tag release/*

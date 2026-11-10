@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- New logo and favicons.
+- Updated the MCP library to 2.3.0.
+
+### Added
+
+- Releases include the image SBOM and a checksums file, each with a Sigstore
+  signature.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added

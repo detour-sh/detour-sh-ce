@@ -44,17 +44,22 @@ docker compose --profile test run --rm --no-deps ui-test
 
 ## Dependencies and assets
 
-Python dependencies are pinned with hashes. To change them, edit
+Python dependencies for the container image are pinned with hashes for Linux
+and Python 3.12. Dependabot updates them monthly. To change them by hand, edit
 `app/requirements.in`, then regenerate the lock file with
 [uv](https://docs.astral.sh/uv/):
 
 ```bash
 cd app
-uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
+uv pip compile requirements.in --python-version 3.12 --python-platform linux --generate-hashes -o requirements.txt
 ```
 
-The logo and favicons are generated from one 16x16 pixel grid in
-`scripts/build_brand.py`. To change them, edit the grid and run:
+The portal and its tests use only the Python standard library, so local
+development without Docker doesn't need these packages. Only the MCP server
+does.
+
+The logo and favicons are pixel art drawn separately at 16 and 32 pixels in
+`scripts/build_brand.py`. To change them, edit the geometry there and run:
 
 ```bash
 uv run --no-project --with pillow==11.3.0 python scripts/build_brand.py
@@ -69,7 +74,8 @@ uv run --no-project --with pillow==11.3.0 python scripts/build_brand.py
 
 The release workflow runs the tests, publishes signed amd64 and arm64 images
 to GitHub Container Registry, and creates the GitHub release from the
-changelog.
+changelog. The release also includes the image SBOM and a checksums file, each
+with a Sigstore signature bundle.
 
 ## Pull requests
 
