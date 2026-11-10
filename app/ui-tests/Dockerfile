@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.49.1-noble@sha256:70e367e0cbf60340a5b5fd562f6247a34eb3196efab9f88a3dd56482d9fe09d2
+FROM mcr.microsoft.com/playwright:v1.65.0-noble@sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d
 WORKDIR /tests
 COPY package.json package-lock.json /tests/
 RUN npm ci --ignore-scripts --no-audit --no-fund
