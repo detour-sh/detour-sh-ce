@@ -102,7 +102,8 @@ jobs:
           echo "${IMAGE}@${DIGEST}" > "detour-sh-ce-${TAG}.image.txt"
           sha256sum detour-sh-ce-* > "detour-sh-ce-${TAG}.SHA256SUMS"
           for file in "detour-sh-ce-${TAG}.SHA256SUMS" "detour-sh-ce-${TAG}.sbom.cdx.json"; do
-            cosign sign-blob --yes "$file" --bundle "$file.sigstore.json" --output-signature "$file.sig"
+            cosign sign-blob --yes "$file" --bundle "$file.sigstore.json"
+            jq -er '.messageSignature.signature' "$file.sigstore.json" > "$file.sig"
           done
           ls -l
 
