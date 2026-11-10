@@ -23,6 +23,7 @@ updates:
     directory: /app
     schedule:
       interval: monthly
+    # Also covers the Node image that builds the portal UI.
     ignore:
       # Stay on Python 3.12 until a deliberate upgrade; take patch and digest updates only.
       - dependency-name: python
@@ -39,3 +40,12 @@ updates:
     directory: /app/ui-tests
     schedule:
       interval: monthly
+
+  # The portal UI. Carbon, React and Vite arrive together once a month.
+  - package-ecosystem: npm
+    directory: /app/web
+    schedule:
+      interval: monthly
+    groups:
+      web:
+        patterns: ["*"]

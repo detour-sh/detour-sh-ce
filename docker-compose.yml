@@ -32,6 +32,7 @@ services:
     build: ./app/ui-tests
     environment:
       DETOUR_BASE_URL: "http://detour:3787"
+      DETOUR_MCP_URL: "http://detour:3788/mcp"
     depends_on:
       detour:
         condition: service_healthy
