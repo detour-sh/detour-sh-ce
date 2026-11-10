@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 // These tests run against the real container: the portal on 3787 and MCP on 3788.
-const MCP_URL = process.env.DETOUR_MCP_URL || "http://detour:3788/mcp";
+const MCP_URL = process.env.DETOUR_MCP_URL || "http://localhost:3788/mcp";
 const ARTIFACTS = process.env.DETOUR_ARTIFACTS || "/artifacts";
 const unique = (prefix) => `${prefix} ${Math.random().toString(36).slice(2, 8)}`;
 

@@ -9,7 +9,7 @@ export default defineConfig({
   outputDir: `${artifacts}/results`,
   reporter: [["list"], ["html", { outputFolder: `${artifacts}/report`, open: "never" }]],
   use: {
-    baseURL: process.env.DETOUR_BASE_URL || "http://detour:3787",
+    baseURL: process.env.DETOUR_BASE_URL || "http://localhost:3787",
     trace: "retain-on-failure",
   },
   projects: [
