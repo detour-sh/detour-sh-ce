@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-10
+
 ### Changed
 
 - New logo and favicons.
@@ -30,5 +32,6 @@ All notable changes to this project are documented here. The format follows
 - Signed multi-architecture images (amd64 and arm64) on GitHub Container
   Registry.
 
-[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/detour-sh/detour-sh-ce/releases/tag/v0.1.0
