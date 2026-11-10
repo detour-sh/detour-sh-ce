@@ -5,6 +5,11 @@ ENV PYTHONUNBUFFERED=1
 ENV PORT=3787
 ENV DETOUR_DATA_DIR=/data
 
+# Apply Debian security fixes published after the pinned base image was built.
+RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
