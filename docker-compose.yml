@@ -1,0 +1,41 @@
+services:
+  detour:
+    build: ./app
+    environment:
+      DETOUR_ENABLE_NESTED_DETOURS: "${DETOUR_ENABLE_NESTED_DETOURS:-false}"
+      DETOUR_MCP_PORT: "3788"
+      DETOUR_MCP_AUTH_MODE: "${DETOUR_MCP_AUTH_MODE:-key}"
+      DETOUR_MCP_ALLOW_STDIO: "${DETOUR_MCP_ALLOW_STDIO:-false}"
+      DETOUR_USER_NAME: "${DETOUR_USER_NAME:-Local user}"
+    ports:
+      - "127.0.0.1:3787:3787"
+      - "127.0.0.1:3788:3788"
+    volumes:
+      - detour-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket, urllib.request; urllib.request.urlopen('http://127.0.0.1:3787/health', timeout=2).read(); socket.create_connection(('127.0.0.1', 3788), timeout=2).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  ui-test:
+    profiles: ["test"]
+    build: ./app/ui-tests
+    environment:
+      DETOUR_BASE_URL: "http://detour:3787"
+    depends_on:
+      detour:
+        condition: service_healthy
+    volumes:
+      - ./artifacts/ui:/artifacts
+
+volumes:
+  detour-data:

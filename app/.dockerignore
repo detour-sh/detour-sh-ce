@@ -1,0 +1,12 @@
+.data
+__pycache__
+*.py[cod]
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+exports
+.git
+.gitignore
+Dockerfile
+README.md
