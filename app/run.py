@@ -7,6 +7,10 @@ import time
 
 
 def main() -> int:
+    # Migrate once, before the portal and MCP processes open the database.
+    from server import init_db
+
+    init_db()
     processes = [
         subprocess.Popen([sys.executable, "/app/server.py"]),
         subprocess.Popen([sys.executable, "/app/mcp_server.py"]),

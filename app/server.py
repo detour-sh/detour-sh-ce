@@ -97,13 +97,31 @@ def normalize_tags(value) -> list[str]:
     return tags
 
 
+BRAND_DIR = Path(__file__).with_name("brand")
+BRAND_FILES = {
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/assets/favicon.svg": ("favicon.svg", "image/svg+xml"),
+    "/assets/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+}
+
+# Bump when init_db gains a migration. Databases at this version skip migrations.
+SCHEMA_VERSION = 1
+BACKUPS_TO_KEEP = 5
+BUSY_TIMEOUT_SECONDS = 10
+
+
+def connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT_SECONDS)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 @contextmanager
 def db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = connect()
     try:
         with conn:
             yield conn
@@ -111,7 +129,39 @@ def db():
         conn.close()
 
 
+def backup_database(conn: sqlite3.Connection, from_version: int) -> Path:
+    backup_dir = DATA_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    target = backup_dir / f"detour-schema{from_version}-{stamp}.sqlite"
+    dest = sqlite3.connect(target)
+    try:
+        conn.backup(dest)
+    finally:
+        dest.close()
+    backups = sorted(backup_dir.glob("detour-schema*.sqlite"), key=lambda path: path.stat().st_mtime)
+    for old in backups[:-BACKUPS_TO_KEEP]:
+        old.unlink(missing_ok=True)
+    return target
+
+
 def init_db() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    conn = connect()
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        current = conn.execute("PRAGMA user_version").fetchone()[0]
+        if current == SCHEMA_VERSION:
+            return
+        if current > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema {current} is newer than this Detour build supports ({SCHEMA_VERSION}). "
+                "Upgrade Detour, or restore a backup from the backups folder in the data volume."
+            )
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1").fetchone():
+            backup_database(conn, current)
+    finally:
+        conn.close()
     with db() as conn:
         migrate_legacy_records_table(conn)
         migrate_to_routes_and_artifacts(conn)
@@ -223,6 +273,7 @@ def init_db() -> None:
             ).fetchall()
             for index, route_row in enumerate(route_rows):
                 conn.execute("UPDATE routes SET sort_order = ? WHERE id = ?", (index, route_row["id"]))
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def hash_mcp_access_key(token: str) -> str:
@@ -1241,6 +1292,9 @@ def render_shell(title: str, active: str, content: str) -> str:
     document.documentElement.dataset.accent = localStorage.getItem("detour-accent") || "green";
     document.documentElement.dataset.textSize = localStorage.getItem("detour-text-size") || "standard";
   </script>
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
   <link rel="stylesheet" href="/assets/portal.css">
 </head>
 <body>
@@ -1992,7 +2046,8 @@ def render_bundle_card(bundle: dict) -> str:
 
 
 class DetourHandler(BaseHTTPRequestHandler):
-    server_version = "detour-local/0.1"
+    def version_string(self) -> str:
+        return "detour"
 
     def do_GET(self) -> None:
         self.route("GET")
@@ -2034,6 +2089,9 @@ class DetourHandler(BaseHTTPRequestHandler):
                 return self.html(render_route_detail(route))
             if method == "GET" and path == "/assets/portal.css":
                 return self.text(Path(__file__).with_name("portal.css").read_text(encoding="utf-8"), "text/css; charset=utf-8")
+            if method == "GET" and path in BRAND_FILES:
+                name, content_type = BRAND_FILES[path]
+                return self.static_file(BRAND_DIR / name, content_type)
             if method == "GET" and path == "/health":
                 return self.json({"ok": True, "service": APP_NAME, "db_path": str(DB_PATH)})
             if path == "/api/search" and method == "GET":
@@ -2231,6 +2289,16 @@ class DetourHandler(BaseHTTPRequestHandler):
 
     def html(self, payload: str, status: HTTPStatus = HTTPStatus.OK) -> None:
         self.text(payload, "text/html; charset=utf-8", status)
+
+    def static_file(self, path: Path, content_type: str) -> None:
+        raw = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("content-type", content_type)
+        self.send_header("content-length", str(len(raw)))
+        self.send_header("cache-control", "public, max-age=86400")
+        self.send_header("x-content-type-options", "nosniff")
+        self.end_headers()
+        self.wfile.write(raw)
 
     def text(self, payload: str, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
         raw = payload.encode("utf-8")

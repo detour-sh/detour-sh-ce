@@ -1,9 +1,12 @@
+# Routine version updates arrive once a month, grouped, so main changes
+# slowly. Security updates are separate and arrive as soon as they're published
+# (enable Dependabot security updates in the repository settings).
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       actions:
         patterns: ["*"]
@@ -11,14 +14,28 @@ updates:
   - package-ecosystem: pip
     directory: /app
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
 
   - package-ecosystem: docker
-    directories: ["/app", "/app/ui-tests"]
+    directory: /app
     schedule:
-      interval: weekly
+      interval: monthly
+    ignore:
+      # Stay on Python 3.12 until a deliberate upgrade; take patch and digest updates only.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # The Playwright image and @playwright/test must stay on the same version.
+  # Both are checked monthly; merge their two PRs together.
+  - package-ecosystem: docker
+    directory: /app/ui-tests
+    schedule:
+      interval: monthly
 
   - package-ecosystem: npm
     directory: /app/ui-tests
     schedule:
-      interval: weekly
+      interval: monthly

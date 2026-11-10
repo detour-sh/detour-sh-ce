@@ -2,6 +2,7 @@ import json
 import base64
 import http.client
 import sqlite3
+import tempfile
 import threading
 import unittest
 import uuid
@@ -538,6 +539,76 @@ class LocalAppTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_path
             legacy_path.unlink(missing_ok=True)
+
+    def test_favicons_are_served_and_banner_is_generic(self):
+        for path, (name, content_type) in server.BRAND_FILES.items():
+            with urlopen(self.base + path, timeout=3) as response:
+                self.assertEqual(response.status, 200, path)
+                self.assertEqual(response.headers["content-type"], content_type)
+                self.assertEqual(response.headers["server"], "detour")
+                self.assertEqual(response.read(), (server.BRAND_DIR / name).read_bytes())
+        _, page, _ = self.request("/")
+        self.assertIn('rel="icon" href="/favicon.ico"', page)
+
+
+class DatabaseLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.previous_paths = server.DATA_DIR, server.DB_PATH, server.EXPORT_DIR
+        server.DATA_DIR = root
+        server.DB_PATH = root / "detour.sqlite"
+        server.EXPORT_DIR = root / "exports"
+
+    def tearDown(self):
+        server.DATA_DIR, server.DB_PATH, server.EXPORT_DIR = self.previous_paths
+        self.tmp.cleanup()
+
+    def backups(self):
+        return sorted((server.DATA_DIR / "backups").glob("*.sqlite"))
+
+    def test_new_database_uses_wal_and_current_schema_without_backup(self):
+        server.init_db()
+        with closing(sqlite3.connect(server.DB_PATH)) as conn:
+            self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], server.SCHEMA_VERSION)
+        self.assertEqual(self.backups(), [])
+
+    def test_existing_unversioned_database_is_backed_up_before_migration(self):
+        with closing(sqlite3.connect(server.DB_PATH)) as conn:
+            conn.execute("CREATE TABLE routes (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+            conn.execute("INSERT INTO routes VALUES ('r1', 'Kept', '', 't', 't')")
+            conn.commit()
+        server.init_db()
+        server.init_db()
+        backups = self.backups()
+        self.assertEqual(len(backups), 1)
+        with closing(sqlite3.connect(backups[0])) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT title FROM routes").fetchone()[0], "Kept")
+        self.assertEqual(server.get_route("r1")["title"], "Kept")
+
+    def test_newer_schema_is_refused(self):
+        with closing(sqlite3.connect(server.DB_PATH)) as conn:
+            conn.execute(f"PRAGMA user_version = {server.SCHEMA_VERSION + 1}")
+        with self.assertRaises(RuntimeError):
+            server.init_db()
+
+    def test_old_backups_are_pruned(self):
+        server.init_db()
+        with closing(sqlite3.connect(server.DB_PATH)) as conn:
+            for _ in range(server.BACKUPS_TO_KEEP + 2):
+                server.backup_database(conn, 0)
+        self.assertEqual(len(self.backups()), server.BACKUPS_TO_KEEP)
+
+
+class BrandAndHeaderTests(unittest.TestCase):
+    def test_brand_files_exist(self):
+        for name, _ in server.BRAND_FILES.values():
+            self.assertTrue((server.BRAND_DIR / name).is_file(), name)
+
+    def test_server_header_hides_versions(self):
+        self.assertEqual(server.DetourHandler.version_string(None), "detour")
 
 
 if __name__ == "__main__":

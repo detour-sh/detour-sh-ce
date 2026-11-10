@@ -1,6 +1,16 @@
-# Detour Community Edition
+<p align="center">
+  <img src=".github/assets/logo.svg" width="96" height="96" alt="Detour logo">
+</p>
 
-When the context is not in the prompt, take a Detour.
+<h1 align="center">Detour Community Edition</h1>
+
+<p align="center">When the context is not in the prompt, take a Detour.</p>
+
+<p align="center">
+  <a href="https://github.com/detour-sh/detour-sh-ce/actions/workflows/ci.yml"><img src="https://github.com/detour-sh/detour-sh-ce/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/detour-sh/detour-sh-ce"><img src="https://api.scorecard.dev/projects/github.com/detour-sh/detour-sh-ce/badge" alt="OpenSSF Scorecard"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-176448" alt="License: Apache-2.0"></a>
+</p>
 
 Detour is a local MCP server and web portal for your AI development tools. Save
 rules, decisions, runbooks, prompts, skills, notes, and project knowledge once,
@@ -19,13 +29,27 @@ again or depend on a harness's memory.
 
 ## Quick start
 
+Use a tagged release. `main` can change between releases.
+
 ```bash
-git clone https://github.com/detour-sh/detour-sh-ce.git
+git clone --branch v0.1.0 https://github.com/detour-sh/detour-sh-ce.git
 cd detour-sh-ce
 docker compose up -d --build
 ```
 
 Open <http://127.0.0.1:3787>.
+
+### Use the prebuilt image instead
+
+Each release publishes a signed image for amd64 and arm64. To run it instead
+of building locally:
+
+```bash
+DETOUR_IMAGE=ghcr.io/detour-sh/detour-sh-ce:0.1.0 docker compose up -d --no-build
+```
+
+To check the signature first, run the `cosign verify` command from the
+[release notes](https://github.com/detour-sh/detour-sh-ce/releases).
 
 ## Connect your AI tool
 
@@ -59,6 +83,7 @@ Set these variables before running `docker compose up`:
 |---|---|---|
 | `DETOUR_USER_NAME` | `Local user` | Display name shown in the portal. |
 | `DETOUR_ENABLE_NESTED_DETOURS` | `false` | Set to `true` to allow Sub-detours. |
+| `DETOUR_IMAGE` | `detour-ce:local` | Image to run. Set to a release image to skip building. |
 
 For example:
 
@@ -78,23 +103,35 @@ through a reverse proxy, tunnel, or port forward.
 
 Detour stores everything in the `detour-data` Docker volume.
 
-To back up the volume:
+To back up the volume to `detour-backup.tgz` in the current folder (macOS,
+Linux, or PowerShell):
 
 ```bash
-docker run --rm -v detour-sh-ce_detour-data:/data -v "$PWD":/backup alpine tar czf /backup/detour-backup.tgz -C /data .
+docker run --rm -v detour-sh-ce_detour-data:/data:ro -v "${PWD}:/backup" alpine tar czf /backup/detour-backup.tgz -C /data .
+```
+
+To restore it into an empty volume, stop Detour first, then run:
+
+```bash
+docker run --rm -v detour-sh-ce_detour-data:/data -v "${PWD}:/backup" alpine tar xzf /backup/detour-backup.tgz -C /data
 ```
 
 The volume name starts with the folder name you cloned into. Check it with
 `docker volume ls`.
 
-To upgrade:
+To upgrade, check out the new release tag and rebuild:
 
 ```bash
-git pull
+git fetch --tags
+git checkout v0.2.0
 docker compose up -d --build
 ```
 
-Existing data is migrated automatically on startup. Take a backup first.
+Replace `v0.2.0` with the release you want. See [CHANGELOG.md](CHANGELOG.md)
+for what changed. When an upgrade changes the database, Detour first saves a
+copy in the `backups` folder of the data volume and keeps the last five. If
+you go back to an older release after an upgrade, Detour won't start on the
+newer database. Restore the matching backup instead.
 
 To stop Detour, run `docker compose down`. Your data stays in the volume. Only
 `docker compose down -v` deletes it.

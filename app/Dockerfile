@@ -6,18 +6,20 @@ ENV PORT=3787
 ENV DETOUR_DATA_DIR=/data
 
 WORKDIR /app
-COPY requirements-mcp.txt /app/requirements-mcp.txt
-RUN pip install --no-cache-dir -r /app/requirements-mcp.txt
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
 COPY server.py /app/server.py
 COPY mcp_server.py /app/mcp_server.py
 COPY run.py /app/run.py
 COPY portal.css /app/portal.css
+COPY brand /app/brand
 
-RUN addgroup --system detour && adduser --system --ingroup detour detour \
+RUN addgroup --system --gid 10001 detour \
+  && adduser --system --uid 10001 --ingroup detour detour \
   && mkdir -p /data \
-  && chown -R detour:detour /app /data
+  && chown 10001:10001 /data
 
-USER detour
+USER 10001:10001
 
 EXPOSE 3787 3788
 CMD ["python", "/app/run.py"]

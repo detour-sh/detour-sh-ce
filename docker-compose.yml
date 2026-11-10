@@ -1,5 +1,6 @@
 services:
   detour:
+    image: "${DETOUR_IMAGE:-detour-ce:local}"
     build: ./app
     environment:
       DETOUR_ENABLE_NESTED_DETOURS: "${DETOUR_ENABLE_NESTED_DETOURS:-false}"

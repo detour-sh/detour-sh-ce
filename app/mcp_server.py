@@ -112,4 +112,7 @@ if __name__ == "__main__":
             raise SystemExit("stdio MCP is disabled while access-key authentication is enabled")
         mcp.run(transport="stdio")
     else:
-        mcp.run(transport="streamable-http", host="0.0.0.0", port=PORT, stateless_http=True, json_response=True)
+        import uvicorn
+
+        app = mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0")
+        uvicorn.run(app, host="0.0.0.0", port=PORT, log_level=mcp.settings.log_level.lower(), server_header=False)
