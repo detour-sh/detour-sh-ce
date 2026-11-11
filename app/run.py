@@ -8,7 +8,7 @@ import time
 
 def main() -> int:
     # Migrate once, before the portal and MCP processes open the database.
-    from server import init_db
+    from store import init_db
 
     init_db()
     processes = [

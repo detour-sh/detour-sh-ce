@@ -12,14 +12,35 @@ Thanks for helping improve Detour Community Edition.
 
 ## Development setup
 
-You need Python 3.12 and Docker.
+You need Python 3.12, Node.js 24 and Docker.
 
-Run the app without Docker:
+The portal UI lives in `app/web` (React, Vite and IBM's Carbon Design System).
+Build it once, then run the portal without Docker:
 
 ```bash
-cd app
+cd app/web
+npm ci
+npm run build
+cd ..
 DETOUR_DATA_DIR=./.data python server.py
 ```
+
+`app/web/.npmrc` turns off install scripts, because Carbon's packages run an
+IBM telemetry script on install. Keep it that way.
+
+While you work on the UI, run `npm run dev` in `app/web`. Vite serves the UI
+with hot reload and sends API calls to the portal on port 3787.
+
+### UI rules
+
+The portal follows Carbon so that it stays consistent and can be upgraded:
+
+- Use Carbon components. The only custom patterns are `ProposalCard`,
+  `TargetList` and `HistoryList` in `app/web/src/components`.
+- Use Carbon tokens for color, spacing and type in `styles.scss`. Don't
+  hard-code colors, sizes or fonts.
+- The portal and the MCP server both go through `app/store.py`. Add behavior
+  there, not in the UI or in a single tool.
 
 Run the tests from the repository root:
 
@@ -35,11 +56,17 @@ and browser tests at desktop and mobile sizes. Screenshots go to
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-local.ps1
 ```
 
+The browser tests create routes and keys, so the check runs under a separate
+Compose project, `detour-check`, with its own volume, and deletes that volume
+at the end. Your own Detour data isn't touched. Stop your own Detour first,
+because both use ports 3787 and 3788.
+
 On other platforms, run the same steps by hand:
 
 ```bash
-docker compose up -d --build detour
-docker compose --profile test run --rm --no-deps ui-test
+docker compose -p detour-check up -d --build --wait detour
+docker compose -p detour-check --profile test run --rm --build --no-deps ui-test
+docker compose -p detour-check --profile test down -v
 ```
 
 ## Dependencies and assets
@@ -54,9 +81,11 @@ cd app
 uv pip compile requirements.in --python-version 3.12 --python-platform linux --generate-hashes -o requirements.txt
 ```
 
-The portal and its tests use only the Python standard library, so local
-development without Docker doesn't need these packages. Only the MCP server
-does.
+The portal uses only the Python standard library. The MCP server and
+`test_mcp.py` need the `mcp` package; without it, those tests are skipped.
+
+Web dependencies are pinned to exact versions in `app/web/package.json`.
+Dependabot updates them monthly, as one group.
 
 The logo and favicons are pixel art drawn separately at 16 and 32 pixels in
 `scripts/build_brand.py`. To change them, edit the geometry there and run:

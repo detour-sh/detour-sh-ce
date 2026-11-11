@@ -12,14 +12,19 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-176448" alt="License: Apache-2.0"></a>
 </p>
 
-Detour is a local MCP server and web portal for your AI development tools. Save
-rules, decisions, runbooks, prompts, skills, notes, and project knowledge once,
-and your AI tools can read it back in any session. You don't have to paste it
-again or depend on a harness's memory.
+Detour is a local MCP server and web portal for your AI development tools. It
+keeps your rules, decisions, runbooks, prompts and notes in one place, and your
+AI tools read them back in any session. You don't have to paste them again or
+depend on a harness's memory.
+
+You don't have to write it all yourself, either. As agents work, they propose
+what's worth keeping, such as a rule you keep repeating or a runbook step that
+went out of date. You approve, edit or reject each proposal in the portal.
 
 - Runs on your machine in one Docker container. No account, no cloud service.
 - Your data stays in a local Docker volume until you choose to export it.
-- AI tools get read-only access, and each tool uses its own revocable key.
+- Agents never write directly. Every change is a proposal you can review and
+  undo, and each AI tool uses its own revocable key.
 
 ## Requirements
 
@@ -53,27 +58,55 @@ To check the signature first, run the `cosign verify` command from the
 
 ## Connect your AI tool
 
-1. In the portal, open **Connections** and create a key for each AI tool you use.
+1. In the portal, open **Agent connections** and create a key for each AI tool
+   you use. Untick **Can propose changes** for a tool that should only read.
 2. Copy the configuration shown for your tool. The MCP endpoint is
    `http://127.0.0.1:3788/mcp`, and each request sends the key as
    `Authorization: Bearer <key>`.
 3. Restart or reload the tool, then ask it to use Detour.
 
-If a tool stops needing access, revoke its key under **Connections**.
+If a tool stops needing access, revoke its key under **Agent connections**.
+
+Detour gives agents these tools:
+
+| Tool | What it does |
+|---|---|
+| `find_routes` | Lists the routes that apply to a folder, repo, topic, file or URL. |
+| `get_context` | Returns the merged context to follow, highest authority first. |
+| `search_context` | Searches item titles and text. |
+| `propose_change` | Proposes adding, editing, retiring or moving an item, or creating a route. |
+| `get_proposal`, `list_my_proposals` | Check whether a proposal was approved, and read your note if it was rejected. |
 
 Cloud-hosted agents can't reach `127.0.0.1`, so only tools running on the same
 machine can connect.
 
 ## Organize context
 
-A **Detour** is a named set of context:
+A **route** is a named set of context. It holds items: rules, decisions,
+runbooks, prompts, notes and references.
 
-- **Global Detour:** applies to all of your work.
-- **Project Detour:** applies to one project.
-- **Sub-detour:** optional, nested under a Project Detour.
+- **Global route:** applies to all of your work.
+- **Project route:** applies wherever one of its targets matches. A target can
+  be a repo, a folder, a file, a topic, an artifact or a URL, so a route isn't
+  tied to a single repository.
+- **Sub-detour:** optional, nested under a Project route.
 
 When context overlaps, Global outranks Project, and Project outranks
 Sub-detour.
+
+## Review what agents propose
+
+Open **Review** to see what agents proposed, why, and a before-and-after view.
+Approve it, edit it and then approve, or reject it with a note the agent can
+read. Each route has a review policy:
+
+- **Ask me every time:** every proposal waits for you. This is the default.
+- **Auto-approve notes:** notes go in right away. Everything else waits.
+- **Read only:** agents can read the route but can't propose changes.
+
+You can pause agent access to a route at any time. Every change, by you or an
+agent, appears under **Activity** and on the route's **History** tab. You can
+undo a change as long as nothing has changed it again since.
 
 ## Configuration
 
