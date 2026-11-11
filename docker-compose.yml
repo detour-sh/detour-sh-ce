@@ -30,8 +30,12 @@ services:
   ui-test:
     profiles: ["test"]
     build: ./app/ui-tests
+    # Share Detour's network so the browser opens http://localhost, as a user does.
+    # Chromium ignores Cross-Origin-Opener-Policy (and logs an error) on plain-HTTP non-localhost origins.
+    network_mode: "service:detour"
     environment:
-      DETOUR_BASE_URL: "http://detour:3787"
+      DETOUR_BASE_URL: "http://localhost:3787"
+      DETOUR_MCP_URL: "http://localhost:3788/mcp"
     depends_on:
       detour:
         condition: service_healthy

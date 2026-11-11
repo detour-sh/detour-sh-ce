@@ -1,0 +1,423 @@
+// Carbon is the design system. Fonts come from @fontsource (bundled, no CDN).
+// Only layout glue lives here: no colors, sizes or fonts that aren't Carbon tokens.
+@use '@carbon/react/scss/config' with (
+  $css--font-face: false
+);
+@use '@carbon/react';
+@use '@carbon/react/scss/spacing' as *;
+@use '@carbon/react/scss/theme' as *;
+@use '@carbon/react/scss/type' as *;
+@use '@carbon/react/scss/breakpoint' as *;
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: $background;
+  color: $text-primary;
+}
+
+.dt-content {
+  margin-top: 3rem;
+  padding: $spacing-07 $spacing-05 $spacing-10;
+  min-height: calc(100vh - 3rem);
+  background: $background;
+
+  @include breakpoint(md) {
+    padding: $spacing-07 $spacing-07 $spacing-10;
+  }
+
+  @include breakpoint(lg) {
+    margin-left: 16rem;
+  }
+
+  &:focus {
+    outline: none;
+  }
+}
+
+.dt-header-tag {
+  align-self: center;
+  margin-right: $spacing-03;
+}
+
+.dt-page {
+  max-width: 82rem;
+  margin: 0;
+}
+
+.dt-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-05;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: $spacing-07;
+
+  h1 {
+    @include type-style('heading-04');
+  }
+
+  p {
+    @include type-style('body-01');
+    color: $text-secondary;
+    max-width: 46rem;
+    margin-top: $spacing-03;
+  }
+}
+
+.dt-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-04;
+  align-items: center;
+}
+
+.dt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-03;
+}
+
+.dt-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-06;
+  align-items: flex-start;
+}
+
+.dt-main {
+  flex: 999 1 36rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-05;
+}
+
+.dt-aside {
+  flex: 1 1 18rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-05;
+}
+
+.dt-tile {
+  background: $layer-01;
+  padding: $spacing-06;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-05;
+
+  h2 {
+    @include type-style('heading-02');
+  }
+
+  h3 {
+    @include type-style('heading-compact-01');
+  }
+}
+
+.dt-muted {
+  @include type-style('body-01');
+  color: $text-secondary;
+}
+
+.dt-label {
+  @include type-style('label-01');
+  color: $text-secondary;
+}
+
+.dt-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-02;
+
+  .cds--tag {
+    margin: 0;
+  }
+}
+
+.dt-spacer {
+  flex: 1 1 auto;
+}
+
+// ProposalCard
+.dt-proposal {
+  border: 1px solid $border-subtle-01;
+}
+
+.dt-proposal-title {
+  @include type-style('heading-02');
+}
+
+.dt-diff {
+  border: 1px solid $border-subtle-01;
+  @include type-style('code-02');
+  overflow-x: auto;
+  margin: 0;
+}
+
+.dt-diff-line {
+  display: flex;
+  gap: $spacing-04;
+  padding: $spacing-02 $spacing-04;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  &--add {
+    background: color-mix(in srgb, #{$support-success} 16%, #{$layer-01});
+  }
+
+  &--del {
+    background: color-mix(in srgb, #{$support-error} 12%, #{$layer-01});
+    text-decoration: line-through;
+  }
+
+  &--ctx {
+    color: $text-secondary;
+  }
+}
+
+.dt-diff-sign {
+  flex: 0 0 1ch;
+  user-select: none;
+}
+
+.dt-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-03;
+
+  .cds--inline-notification {
+    flex: 1 1 20rem;
+    max-width: none;
+    margin: 0;
+  }
+}
+
+// Definition lists in side tiles
+.dt-dl {
+  display: flex;
+  flex-direction: column;
+
+  > div {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: $spacing-04;
+    padding: $spacing-04 0;
+    border-top: 1px solid $border-subtle-01;
+  }
+
+  dt {
+    @include type-style('body-compact-01');
+  }
+
+  dd {
+    margin: 0;
+  }
+}
+
+.dt-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-05;
+
+  dt {
+    @include type-style('label-01');
+    color: $text-secondary;
+  }
+
+  dd {
+    @include type-style('heading-03');
+    margin: $spacing-02 0 0;
+  }
+}
+
+// TargetList and HistoryList
+.dt-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-04;
+  align-items: center;
+  padding: $spacing-04 0;
+  border-top: 1px solid $border-subtle-01;
+
+  &:last-child {
+    border-bottom: 1px solid $border-subtle-01;
+  }
+}
+
+.dt-row-kind {
+  min-width: 6rem;
+
+  .cds--tag {
+    margin: 0;
+  }
+}
+
+.dt-row-main {
+  flex: 999 1 16rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dt-row-meta {
+  flex: 1 1 10rem;
+  @include type-style('label-01');
+  color: $text-secondary;
+}
+
+.dt-code {
+  @include type-style('code-02');
+}
+
+.dt-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  @include type-style('body-01');
+  padding: $spacing-04 0;
+}
+
+.dt-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-05;
+  align-items: flex-end;
+
+  > * {
+    flex: 1 1 12rem;
+  }
+
+  > .cds--btn {
+    flex: 0 0 auto;
+  }
+}
+
+.dt-stack {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-06;
+}
+
+.dt-prompt {
+  @include type-style('code-02');
+  background: $layer-01;
+  padding: $spacing-05;
+  flex: 1 1 22rem;
+}
+
+.dt-ask {
+  background: $background;
+  color: $text-primary;
+  padding: $spacing-06;
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-06;
+  align-items: center;
+
+  > div:first-child {
+    flex: 999 1 26rem;
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-03;
+  }
+
+  h2 {
+    @include type-style('heading-03');
+  }
+}
+
+.dt-empty {
+  background: $layer-01;
+  padding: $spacing-09 $spacing-06;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-03;
+  align-items: flex-start;
+
+  h2 {
+    @include type-style('heading-03');
+  }
+}
+
+.dt-context-layer {
+  border-top: 1px solid $border-subtle-01;
+  padding: $spacing-05 0;
+
+  h3 {
+    @include type-style('heading-compact-01');
+    margin-bottom: $spacing-03;
+  }
+}
+
+.dt-nav-count {
+  margin-left: auto;
+}
+
+.dt-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.dt-table-wrap {
+  overflow-x: auto;
+
+  .cds--data-table-container {
+    min-width: 0;
+  }
+}
+
+.dt-sidenav-footer {
+  padding: $spacing-05;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  margin-top: auto;
+}
+
+.dt-gap-top {
+  margin-top: $spacing-06;
+}
+
+// Carbon hides inactive tab panels with the hidden attribute; layout classes must not override it.
+[hidden] {
+  display: none !important;
+}
+
+.dt-heading-03 {
+  @include type-style('heading-03');
+}
+
+.dt-heading-04 {
+  @include type-style('heading-04');
+}
+
+.dt-body-01 {
+  @include type-style('body-01');
+}
+
+.dt-dl > div {
+  flex-wrap: wrap;
+}
+
+.dt-dl dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
