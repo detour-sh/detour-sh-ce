@@ -79,6 +79,18 @@ class McpToolTests(unittest.TestCase):
             self.skipTest("tool manager not exposed by this MCP version")
         self.assertTrue(tools["get_context"].annotations.read_only_hint)
         self.assertFalse(tools["propose_change"].annotations.read_only_hint)
+        # A retried auto-approved note would be added twice, so clients must not retry blindly.
+        self.assertFalse(tools["propose_change"].annotations.idempotent_hint)
+
+    def test_opted_in_stdio_acts_as_the_local_agent(self):
+        with mock.patch.object(self.mcp, "get_access_token", return_value=None):
+            with self.assertRaisesRegex(ValueError, "revoked"):
+                self.mcp.propose_change("add", "r", route="app", title="over HTTP")
+            with mock.patch.object(self.mcp, "STDIO_TRANSPORT", True):
+                note = self.mcp.propose_change("add", "r", route="app", title="over stdio")
+                self.assertEqual(note["outcome"], "applied")
+                self.assertEqual(self.mcp.get_proposal(note["id"])["status"], "auto")
+                self.assertEqual([p["id"] for p in self.mcp.list_my_proposals()], [note["id"]])
 
 
 if __name__ == "__main__":

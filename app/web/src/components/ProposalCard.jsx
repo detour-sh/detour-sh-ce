@@ -155,7 +155,8 @@ export default function ProposalCard({ proposal, onChanged }) {
               Open route
             </AppLink>
           ) : null}
-          {p.action !== "create_route" ? (
+          {/* An approved new route is undone by deleting the route; a rejection can always be taken back. */}
+          {p.status === "rejected" || p.action !== "create_route" ? (
             <Button size="md" kind="ghost" disabled={busy} onClick={() => act(() => api.reopen(p.id))}>
               Undo
             </Button>

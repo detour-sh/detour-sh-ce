@@ -75,11 +75,18 @@ def connect() -> sqlite3.Connection:
 
 
 @contextmanager
-def db():
+def db(write: bool = False):
+    """A connection whose work commits together.
+
+    write=True takes the write lock before anything is read, so a check such as
+    "is this proposal still pending?" can't be overtaken by another writer.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = connect()
     try:
         with conn:
+            if write:
+                conn.execute("BEGIN IMMEDIATE")
             yield conn
     finally:
         conn.close()
@@ -332,7 +339,8 @@ def _migrate_legacy(conn, legacy: dict[str, str]) -> None:
             elif kind == "repo":
                 add_target(route_id, "repo", row["url"] or row["label"])
 
-    leftovers = [row for row in artifacts.values() if row["id"] not in attached and row["status"] == "active"]
+    # Archived ones come along too: _migrate_artifact keeps them as retired items.
+    leftovers = [row for row in artifacts.values() if row["id"] not in attached]
     if leftovers:
         holder = make_id()
         conn.execute(
@@ -375,7 +383,11 @@ def _migrate_artifact(artifact, route_id, add_item, add_target, artifact_body) -
             add_target(route_id, "repo", artifact["cloud_url"])
         if "local_path" in keys:
             add_target(route_id, "folder", artifact["local_path"])
-        body = (artifact["body_markdown"] or "").strip()
+        # The path and URL became targets above; the body and notes are the context.
+        parts = [artifact["body_markdown"] or ""]
+        if "notes_markdown" in keys:
+            parts.append(artifact["notes_markdown"] or "")
+        body = "\n\n".join(part.strip() for part in parts if part.strip())[:MAX_BODY]
         if body:
             add_item(route_id, "reference", artifact["title"], body, status, artifact["created_at"])
         return
@@ -571,6 +583,9 @@ def update_route(ref: str, payload: dict, actor: str = YOU) -> dict:
         fields = _validate_route_fields(conn, payload, row)
         if fields["scope"] != row["scope"] and conn.execute("SELECT 1 FROM routes WHERE parent_id = ?", (row["id"],)).fetchone():
             raise ValueError("move or delete this route's Sub-detours before changing its scope")
+        if fields["scope"] == "global" and row["scope"] != "global" and \
+                conn.execute("SELECT 1 FROM targets WHERE route_id = ?", (row["id"],)).fetchone():
+            raise ValueError("remove this route's targets before making it Global. Global routes apply everywhere")
         changes = [label for key, label in (("name", "name"), ("description", "description"), ("policy", "review policy"),
                                              ("paused", "agent access"), ("scope", "scope")) if fields[key] != row[key]]
         conn.execute(
@@ -774,13 +789,13 @@ def list_events(route_ref: str | None = None, limit: int = 100) -> list[dict]:
         events = []
         for row in rows.fetchall():
             event = {key: row[key] for key in ("id", "entity", "entity_id", "route_id", "route_name", "action", "actor", "summary", "proposal_id", "created_at", "undone_at")}
-            event["undoable"] = row["entity"] in ("item", "target") and row["undone_at"] is None
+            event["undoable"] = row["entity"] in ("item", "target") and row["action"] != "undo" and row["undone_at"] is None
             events.append(event)
         return events
 
 
 def undo_event(event_id: str, actor: str = YOU) -> dict:
-    with db() as conn:
+    with db(write=True) as conn:
         return _undo(conn, event_id, actor)
 
 
@@ -792,6 +807,9 @@ def _undo(conn, event_id: str, actor: str) -> dict:
         raise Conflict("That change was already undone.")
     if event["entity"] not in ("item", "target"):
         raise Conflict("Route changes can't be undone here. Change the route instead.")
+    if event["action"] == "undo":
+        # Replaying an undo would bring back an approved change while its proposal stays pending.
+        raise Conflict("An undo can't be undone. Make the change again instead.")
     before = json.loads(event["before_json"]) if event["before_json"] else None
     after = json.loads(event["after_json"]) if event["after_json"] else None
     current = _load(conn, event["entity"], event["entity_id"])
@@ -828,7 +846,7 @@ def propose(key: dict, payload: dict) -> dict:
     action = _choice(payload.get("action"), PROPOSAL_ACTIONS, "action")
     reason = _text(payload, "reason", MAX_TEXT, required=True)
     source = _text(payload, "source", MAX_TEXT)
-    with db() as conn:
+    with db(write=True) as conn:
         route, dest = _proposal_target_routes(conn, action, payload)
         for row in (route, dest):
             if row is None:
@@ -880,14 +898,13 @@ def propose(key: dict, payload: dict) -> dict:
 
         route_id = route["id"] if route is not None else None
         item_id = before["id"] if before else None
-        fingerprint = (normalized.get("title") or normalized.get("name") or "").casefold()
+        fingerprint = _proposal_fingerprint(normalized)
         for row in conn.execute(
             "SELECT * FROM proposals WHERE action = ? AND COALESCE(route_id, '') = COALESCE(?, '') AND COALESCE(item_id, '') = COALESCE(?, '') "
             "AND status IN ('pending', 'rejected') ORDER BY created_at DESC",
             (action, route_id, item_id),
         ):
-            old = json.loads(row["payload_json"])
-            if (old.get("title") or old.get("name") or "").casefold() != fingerprint:
+            if _proposal_fingerprint(json.loads(row["payload_json"])) != fingerprint:
                 continue
             if row["status"] == "pending":
                 return _proposal_dict(conn, row) | {"outcome": "already_pending"}
@@ -907,6 +924,18 @@ def propose(key: dict, payload: dict) -> dict:
             _apply_proposal(conn, proposal_id, {}, key.get("name") or "Agent", status="auto")
         row = conn.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
         return _proposal_dict(conn, row) | {"outcome": "applied" if auto else "waiting_for_review"}
+
+
+def _proposal_fingerprint(payload: dict) -> str:
+    """What a proposal would change, so a corrected proposal isn't mistaken for the one the user rejected.
+
+    Titles and names compare without case; everything else (kind, body, destination, scope, targets) must match.
+    """
+    change = {key: value for key, value in payload.items() if key != "before"}
+    for key in ("title", "name"):
+        if isinstance(change.get(key), str):
+            change[key] = change[key].casefold()
+    return json.dumps(change, sort_keys=True)
 
 
 def _proposal_dict(conn, row) -> dict:
@@ -1006,7 +1035,9 @@ def _apply_proposal(conn, proposal_id: str, overrides: dict, actor: str, status:
             {"name": payload["name"], "scope": payload["scope"], "parent_id": payload["parent_id"],
              "description": payload["description"], "targets": payload["targets"]}, who, conn)
         conn.execute("UPDATE proposals SET route_id = ? WHERE id = ?", (route["id"], proposal_id))
-    conn.execute("UPDATE proposals SET status = ?, decided_at = ?, event_id = ? WHERE id = ?", (status, now_iso(), event_id, proposal_id))
+    # Store what was actually applied, so the decided card, the agent and a later re-approval all see the user's edits.
+    conn.execute("UPDATE proposals SET status = ?, decided_at = ?, event_id = ?, payload_json = ? WHERE id = ?",
+                 (status, now_iso(), event_id, json.dumps(payload), proposal_id))
     return event_id
 
 
@@ -1014,14 +1045,14 @@ def approve_proposal(proposal_id: str, overrides: dict | None = None, actor: str
     overrides = overrides or {}
     if not isinstance(overrides, dict):
         raise ValueError("changes must be an object")
-    with db() as conn:
+    with db(write=True) as conn:
         _apply_proposal(conn, proposal_id, overrides, actor)
         return _proposal_dict(conn, conn.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,)).fetchone())
 
 
 def reject_proposal(proposal_id: str, note: str = "", actor: str = YOU) -> dict:
     note = _text({"note": note}, "note", MAX_TEXT)
-    with db() as conn:
+    with db(write=True) as conn:
         row = conn.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
         if row is None:
             raise KeyError("proposal not found")
@@ -1033,7 +1064,7 @@ def reject_proposal(proposal_id: str, note: str = "", actor: str = YOU) -> dict:
 
 def reopen_proposal(proposal_id: str, actor: str = YOU) -> dict:
     """Undo a decision: revert what an approval changed, or take back a rejection."""
-    with db() as conn:
+    with db(write=True) as conn:
         row = conn.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
         if row is None:
             raise KeyError("proposal not found")

@@ -23,6 +23,9 @@ MCP_RESOURCE = f"http://127.0.0.1:{PORT}/mcp"
 AUTH_MODE = os.environ.get("DETOUR_MCP_AUTH_MODE", "key").strip().lower()
 ALLOW_STDIO = os.environ.get("DETOUR_MCP_ALLOW_STDIO", "false").lower() == "true"
 LOCAL_AGENT = {"id": None, "name": "Local agent", "can_propose": True}
+# Set only by the --stdio entry point, after the user opted in with DETOUR_MCP_ALLOW_STDIO.
+# HTTP calls never see it, so a request without a token still can't skip key checks.
+STDIO_TRANSPORT = False
 
 
 class LocalAccessKeyVerifier:
@@ -37,7 +40,7 @@ class LocalAccessKeyVerifier:
 
 def current_key() -> dict:
     """The access key behind this call, read fresh so portal changes apply at once."""
-    if AUTH_MODE != "key":
+    if AUTH_MODE != "key" or STDIO_TRANSPORT:
         return LOCAL_AGENT
     token = get_access_token()
     key = store.get_key(token.client_id) if token else None
@@ -79,7 +82,8 @@ mcp = MCPServer(
     **options,
 )
 READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
-PROPOSE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+# Not idempotent: on a route that auto-approves notes, sending the same note twice adds it twice.
+PROPOSE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 
 
 @mcp.tool(annotations=READ)
@@ -166,7 +170,7 @@ def propose_change(
 def get_proposal(proposal_id: str) -> dict:
     """Check one of your proposals: pending, approved, auto (applied by policy) or rejected, with the user's note if they left one."""
     key = current_key()
-    result = store.get_proposal(proposal_id, key["id"] if AUTH_MODE == "key" else None)
+    result = store.get_proposal(proposal_id, key["id"])  # None for the local agent: it can see every proposal
     return {key_: result[key_] for key_ in ("id", "status", "action", "route", "proposed", "decision_note", "decided_at")}
 
 
@@ -175,7 +179,7 @@ def get_proposal(proposal_id: str) -> dict:
 def list_my_proposals(status: str = "all") -> list[dict]:
     """List proposals made with this access key. status: pending, approved, rejected, auto, decided or all."""
     key = current_key()
-    results = store.list_proposals(status, key["id"] if AUTH_MODE == "key" else None, limit=50)
+    results = store.list_proposals(status, key["id"], limit=50)
     return [{k: r[k] for k in ("id", "status", "action", "route", "proposed", "decision_note", "created_at")} for r in results]
 
 
@@ -184,6 +188,7 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--stdio"]:
         if AUTH_MODE == "key" and not ALLOW_STDIO:
             raise SystemExit("stdio MCP is disabled while access-key authentication is enabled")
+        STDIO_TRANSPORT = True
         mcp.run(transport="stdio")
     else:
         import uvicorn
