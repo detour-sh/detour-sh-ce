@@ -21,8 +21,9 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
   four 0.1 tools.
 - Upgrading migrates 0.1 data automatically, after the usual backup. Artifacts
   attached to a Detour become items, repositories and local paths become
-  targets, and environment flags become rules. Unattached artifacts move to a
-  route named "Imported from Detour 0.1". Keys from 0.1 stay read-only until
+  targets (their notes become a reference item), and environment flags become
+  rules. Unattached artifacts move to a route named "Imported from Detour 0.1",
+  with archived ones kept as retired items. Keys from 0.1 stay read-only until
   you allow proposals for them.
 - New logo and favicons.
 - Updated the MCP library to 2.3.0.

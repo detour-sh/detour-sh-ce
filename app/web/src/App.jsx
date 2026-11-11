@@ -50,7 +50,8 @@ function page(path) {
   if (path === "/" || path === "/review") return <Review />;
   if (path === "/routes") return <RoutesPage />;
   const routeMatch = path.match(/^\/routes\/([A-Za-z0-9_-]+)$/);
-  if (routeMatch) return <RouteDetail routeId={routeMatch[1]} />;
+  // Keyed so moving between routes starts fresh; an open editor can't save into the route you left.
+  if (routeMatch) return <RouteDetail key={routeMatch[1]} routeId={routeMatch[1]} />;
   if (path === "/activity") return <ActivityPage />;
   if (path === "/connections") return <Connections />;
   if (path === "/settings") return <SettingsPage />;

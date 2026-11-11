@@ -1,6 +1,8 @@
 import json
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -61,6 +63,27 @@ class RouteAndItemTests(StoreCase):
         with self.assertRaises(store.Conflict):
             store.undo_event(events[1]["id"])
 
+    def test_undo_events_cannot_be_undone(self):
+        route = self.project()
+        result = store.propose(self.agent, {"action": "add", "route": "app", "title": "T", "reason": "r"})
+        store.approve_proposal(result["id"])
+        store.reopen_proposal(result["id"])
+        inverse = store.list_events(route["id"])[0]
+        self.assertEqual(inverse["action"], "undo")
+        self.assertFalse(inverse["undoable"])
+        with self.assertRaises(store.Conflict):
+            store.undo_event(inverse["id"])
+        # The proposal is pending with nothing applied, so approving again adds exactly one item.
+        store.approve_proposal(result["id"])
+        self.assertEqual(len(store.list_items(route["id"])), 1)
+
+    def test_route_with_targets_cannot_become_global(self):
+        route = self.project(targets=[{"kind": "topic", "value": "billing"}])
+        with self.assertRaisesRegex(ValueError, "targets"):
+            store.update_route(route["id"], {"scope": "global"})
+        store.remove_target(route["targets"][0]["id"])
+        self.assertEqual(store.update_route(route["id"], {"scope": "global"})["scope"], "global")
+
     def test_retire_restore_move_and_delete(self):
         a, b = self.project("a"), self.project("b")
         item = store.create_item(a["id"], {"kind": "note", "title": "N"})
@@ -95,11 +118,41 @@ class ProposalTests(StoreCase):
         self.assertEqual(approved["status"], "approved")
         item = store.list_items(route["id"])[0]
         self.assertEqual((item["title"], item["created_by"]), ("Sign every release", "Claude Code"))
+        self.assertEqual(approved["proposed"]["title"], "Sign every release")
         reopened = store.reopen_proposal(result["id"])
         self.assertEqual(reopened["status"], "pending")
+        self.assertEqual(reopened["proposed"]["title"], "Sign every release")
         self.assertEqual(store.list_items(route["id"]), [])
         with self.assertRaises(ValueError):
             store.approve_proposal(result["id"], {"route_id": "x"})
+        store.approve_proposal(result["id"])
+        self.assertEqual(store.list_items(route["id"])[0]["title"], "Sign every release")
+
+    def test_concurrent_approvals_apply_once(self):
+        route = self.project()
+        result = store.propose(self.agent, {"action": "add", "route": "app", "title": "Once", "reason": "r"})
+        errors = []
+
+        def approve():
+            try:
+                store.approve_proposal(result["id"])
+            except store.Conflict as exc:
+                errors.append(exc)
+
+        # Another writer holds the lock and decides the proposal while this approval is waiting.
+        holder = store.connect()
+        try:
+            holder.execute("BEGIN IMMEDIATE")
+            worker = threading.Thread(target=approve)
+            worker.start()
+            time.sleep(0.3)
+            holder.execute("UPDATE proposals SET status = 'rejected', decided_at = ? WHERE id = ?", (store.now_iso(), result["id"]))
+            holder.commit()
+        finally:
+            holder.close()
+        worker.join(timeout=10)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(store.list_items(route["id"]), [])
 
     def test_notes_policy_auto_applies_only_notes(self):
         route = self.project(policy="notes")
@@ -131,6 +184,19 @@ class ProposalTests(StoreCase):
         self.assertEqual(third["outcome"], "previously_rejected")
         self.assertEqual(third["decision_note"], "Keep it local")
         self.assertEqual(store.proposal_counts()["pending"], 0)
+        # Same title, different text: a corrected proposal reaches Review.
+        revised = store.propose(self.agent, {"action": "add", "route": "app", "title": "Expose port", "body": "Only on localhost", "reason": "r"})
+        self.assertEqual(revised["outcome"], "waiting_for_review")
+
+    def test_rejected_move_does_not_block_a_different_destination(self):
+        a, b, c = self.project("a"), self.project("b"), self.project("c")
+        item = store.create_item(a["id"], {"kind": "note", "title": "N"})
+        to_b = store.propose(self.agent, {"action": "move", "item_id": item["id"], "to_route": "b", "reason": "r"})
+        store.reject_proposal(to_b["id"])
+        again = store.propose(self.agent, {"action": "move", "item_id": item["id"], "to_route": "b", "reason": "r"})
+        self.assertEqual(again["outcome"], "previously_rejected")
+        to_c = store.propose(self.agent, {"action": "move", "item_id": item["id"], "to_route": "c", "reason": "r"})
+        self.assertEqual((to_c["outcome"], to_c["to_route"]["id"]), ("waiting_for_review", c["id"]))
 
     def test_edit_retire_move_and_stale_proposals(self):
         a, b = self.project("a"), self.project("b")
@@ -304,6 +370,8 @@ class MigrationTests(unittest.TestCase):
                 ("a2", "repo", "Router repo", "router", "", "[]", "active", "private", ts, ts, "C:\\work\\router", "https://github.com/me/router.git", "", "", 0, "", ""),
                 ("a3", "doc", "Old spec", "old", "v1", "[]", "archived", "private", ts, ts, "", "", "", "", 0, "", ""),
                 ("a4", "note", "Loose note", "loose", "Not on any route", "[]", "active", "private", ts, ts, "", "", "", "", 0, "", ""),
+                ("a5", "doc", "Archived loose", "aloose", "Old and unattached", "[]", "archived", "private", ts, ts, "", "", "", "", 0, "", ""),
+                ("a6", "repo", "Notes-only repo", "notesrepo", "", "[]", "active", "private", ts, ts, "", "https://github.com/me/tools", "Run make first", "", 0, "", ""),
             ]
             conn.executemany("INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             conn.execute("INSERT INTO routes VALUES ('g', 'Global', 'Everything', 0, ?, ?, 'global', NULL)", (ts, ts))
@@ -332,7 +400,11 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(items["Heads up"]["kind"], "note")
         self.assertEqual(items["Spec"]["body"], "https://example.org/spec")
         self.assertEqual(store.list_items("r2")[0]["status"], "retired")
-        self.assertEqual(store.list_items("Imported from Detour 0.1")[0]["title"], "Loose note")
+        imported = {i["title"]: i for i in store.list_items("Imported from Detour 0.1")}
+        self.assertEqual(set(imported), {"Loose note", "Archived loose", "Notes-only repo"})
+        self.assertEqual(imported["Loose note"]["status"], "active")
+        self.assertEqual((imported["Archived loose"]["status"], imported["Archived loose"]["body"]), ("retired", "Old and unattached"))
+        self.assertEqual(imported["Notes-only repo"]["body"], "Run make first")
         self.assertEqual(store.list_items("g")[0]["body"], "NEVER_DELETE=true\n\nHard rule")
         key = store.verify_key("dtr_old")
         self.assertFalse(key["can_propose"])
