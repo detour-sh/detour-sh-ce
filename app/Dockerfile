@@ -1,5 +1,5 @@
 # Stage 1: build the portal UI (React + Carbon) into static files.
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS web
+FROM node:26-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS web
 
 # Carbon's packages run an IBM telemetry script on install. Install scripts stay off.
 ENV IBM_TELEMETRY_DISABLED=true
