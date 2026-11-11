@@ -81,7 +81,7 @@ The examples below show the portal with sample data.
 Use a tagged release. `main` can change between releases.
 
 ```bash
-git clone --branch v0.1.0 https://github.com/detour-sh/detour-sh-ce.git
+git clone --branch v0.1.1 https://github.com/detour-sh/detour-sh-ce.git
 cd detour-sh-ce
 docker compose up -d --build
 ```
@@ -94,7 +94,7 @@ Each release publishes a signed image for amd64 and arm64. To run it instead
 of building locally:
 
 ```bash
-DETOUR_IMAGE=ghcr.io/detour-sh/detour-sh-ce:0.1.0 docker compose up -d --no-build
+DETOUR_IMAGE=ghcr.io/detour-sh/detour-sh-ce:0.1.1 docker compose up -d --no-build
 ```
 
 To check the signature first, run the `cosign verify` command from the

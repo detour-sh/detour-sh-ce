@@ -44,6 +44,18 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 - Releases include the image SBOM and a checksums file, each with a Sigstore
   signature.
 
+## [0.1.1] - 2026-11-10
+
+### Changed
+
+- New logo and favicons.
+- Updated the MCP library to 2.3.0.
+
+### Added
+
+- Releases include the image SBOM and a checksums file, each with a Sigstore
+  signature.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added
@@ -58,5 +70,6 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 - Signed multi-architecture images (amd64 and arm64) on GitHub Container
   Registry.
 
-[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/detour-sh/detour-sh-ce/releases/tag/v0.1.0
