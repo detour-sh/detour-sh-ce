@@ -26,6 +26,50 @@ went out of date. You approve, edit or reject each proposal in the portal.
 - Agents never write directly. Every change is a proposal you can review and
   undo, and each AI tool uses its own revocable key.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/screenshots/review-dark.png">
+  <img src=".github/assets/screenshots/review-light.png" alt="The Review page. Claude Code proposes an edit to a release runbook, with the reason and a before-and-after diff, and buttons to approve, edit then approve, or reject.">
+</picture>
+
+## Screenshots
+
+The examples below show the portal with sample data.
+
+<table>
+  <tr>
+    <td width="50%">
+      <b>Routes</b>: every set of context, what it applies to, and what needs your attention.<br><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset=".github/assets/screenshots/routes-dark.png">
+        <img src=".github/assets/screenshots/routes-light.png" alt="The Routes page listing a Global route and three Project routes with their repo, folder, topic and URL targets, item counts, review policy and pending proposals.">
+      </picture>
+    </td>
+    <td width="50%">
+      <b>A route</b>: its rules, decisions, runbooks, notes and references.<br><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset=".github/assets/screenshots/route-dark.png">
+        <img src=".github/assets/screenshots/route-light.png" alt="A Project route's Context tab showing six items of different kinds, who added each one, and when an agent last used it.">
+      </picture>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <b>Activity</b>: every change by you or an agent, with undo.<br><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset=".github/assets/screenshots/activity-dark.png">
+        <img src=".github/assets/screenshots/activity-light.png" alt="The Activity page listing recent changes, including an agent proposal approved by the user and a note that was auto-approved, each with an Undo link.">
+      </picture>
+    </td>
+    <td width="50%">
+      <b>Agent connections</b>: one revocable key per AI tool.<br><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset=".github/assets/screenshots/connections-dark.png">
+        <img src=".github/assets/screenshots/connections-light.png" alt="The Agent connections page showing the local MCP endpoint and access keys for Claude Code, Codex, a read-only Cursor key and a revoked key.">
+      </picture>
+    </td>
+  </tr>
+</table>
+
 ## Requirements
 
 - Docker with Docker Compose v2 (Docker Desktop on macOS or Windows).
