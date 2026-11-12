@@ -299,12 +299,111 @@ class KeyAndExportTests(StoreCase):
         store.create_item(app["id"], {"kind": "decision", "title": "D", "body": "B"})
         exported = store.export_all()
         counts = store.import_all(json.loads(json.dumps(exported)))
-        self.assertEqual(counts, {"routes": 2, "items": 1, "targets": 1})
+        self.assertEqual(counts, {"routes": 2, "items": 1, "targets": 1, "skips": 0, "includes": 0})
         subs = [r for r in store.list_routes() if r["scope"] == "sub"]
         self.assertEqual(len(subs), 2)
         self.assertNotEqual(subs[0]["parent_id"], subs[1]["parent_id"])
         with self.assertRaises(ValueError):
             store.import_all({"format": "nope"})
+
+
+class CheckTests(StoreCase):
+    def setUp(self):
+        super().setUp()
+        self.glob = store.create_route({"name": "Global", "scope": "global"})
+        self.envs = store.create_item(self.glob["id"], {"kind": "check", "title": "env list check", "body": "Defines dev, test, stage and prod."})
+        self.gates = self.project("Release gates")
+        self.gate = store.create_item(self.gates["id"], {"kind": "check", "title": "prod release gates", "body": "Prod deploys need an approval."})
+        self.site = self.project("static-site", targets=[{"kind": "folder", "value": "~/code/site"}])
+        self.preview = store.create_item(self.site["id"], {"kind": "check", "title": "preview deploy check", "body": "Every PR gets a preview."})
+        store.create_item(self.glob["id"], {"kind": "rule", "title": "Not a check"})
+
+    def names(self, plan):
+        return [c["name"] for c in plan["checks"]]
+
+    def test_checks_follow_routes_and_includes(self):
+        self.assertEqual(self.names(store.plan_checks(folder="/home/me/code/api")), ["env list check"])
+        safety = self.project("Personal safety check")
+        store.add_include(safety["id"], {"route_id": self.gates["id"]})
+        plan = store.plan_checks(route_ref="Personal safety check")
+        self.assertEqual(plan["label"], "Personal safety check")
+        self.assertEqual(self.names(plan), ["env list check", "prod release gates"])
+        self.assertEqual(plan["checks"][1]["included_by"], "Personal safety check")
+        with self.assertRaisesRegex(ValueError, "loop"):
+            store.add_include(self.gates["id"], {"route_id": safety["id"]})
+        with self.assertRaises(ValueError):
+            store.add_include(safety["id"], {"route_id": safety["id"]})
+        with self.assertRaises(store.Conflict):
+            store.add_include(safety["id"], {"route_id": self.gates["id"]})
+        store.update_route(self.gates["id"], {"paused": True})
+        self.assertEqual(self.names(store.plan_checks(route_ref="Personal safety check")), ["env list check"])
+        store.update_route(self.gates["id"], {"paused": False})
+        store.remove_include(safety["id"], self.gates["id"])
+        self.assertEqual(store.get_route(safety["id"])["includes"], [])
+
+    def test_a_route_can_skip_a_check_and_run_another_instead(self):
+        with self.assertRaisesRegex(ValueError, "reason"):
+            store.add_skip(self.site["id"], {"check_id": self.envs["id"]})
+        with self.assertRaises(KeyError):
+            store.add_skip(self.site["id"], {"check_id": self.gate["id"] + "x", "reason": "r"})
+        skip = store.add_skip(self.site["id"], {"check_id": self.envs["id"], "instead_id": self.preview["id"], "reason": "No deploy environments"})
+        self.assertEqual(skip["instead"]["name"], "preview deploy check")
+        with self.assertRaises(store.Conflict):
+            store.add_skip(self.site["id"], {"check_id": self.envs["id"], "reason": "again"})
+        plan = store.plan_checks(folder="/home/me/code/site")
+        self.assertEqual(self.names(plan), ["preview deploy check"])
+        self.assertEqual(plan["skipped"][0]["skipped_by"], "static-site")
+        self.assertEqual(self.names(store.plan_checks(folder="/home/me/code/api")), ["env list check"])
+        # the replacement runs even when it lives in a route that doesn't apply
+        store.remove_skip(skip["id"])
+        store.add_skip(self.site["id"], {"check_id": self.envs["id"], "instead_id": self.gate["id"], "reason": "r"})
+        plan = store.plan_checks(folder="/home/me/code/site")
+        self.assertEqual(self.names(plan), ["preview deploy check", "prod release gates"])
+        self.assertEqual(plan["checks"][1]["instead_of"], "env list check")
+        self.assertIn("Skips check", store.list_events(self.site["id"])[0]["summary"])
+        self.assertFalse(store.list_events(self.site["id"])[0]["undoable"])
+
+    def test_recording_a_run(self):
+        store.add_skip(self.site["id"], {"check_id": self.envs["id"], "reason": "No deploy environments"})
+        store.create_item(self.site["id"], {"kind": "check", "title": "lint", "body": "Lint passes."})
+        run = store.record_check_run(self.agent, [
+            {"check": "Preview Deploy Check", "status": "pass", "evidence": "PR #4 has a preview"},
+        ], folder="/home/me/code/site")
+        self.assertEqual(run["outcome"], "incomplete")
+        self.assertEqual((run["passed"], run["failed"], run["skipped"], run["not_run"]), (1, 0, 1, 1))
+        self.assertEqual(run["agent"], "Claude Code")
+        self.assertIn("✓ preview deploy check", run["summary"])
+        self.assertIn("↷ env list check", run["summary"])
+        self.assertTrue(run["summary"].startswith("Checks for ~/code/site") or run["summary"].startswith("Checks for /home/me/code/site"))
+        failed = store.record_check_run(self.agent, [
+            {"check": self.preview["id"], "status": "FAIL", "evidence": "no preview"},
+            {"check": "lint", "status": "pass", "evidence": "clean"},
+        ], folder="/home/me/code/site")
+        self.assertEqual(failed["outcome"], "failed")
+        self.assertEqual([r["id"] for r in store.list_check_runs()], [failed["id"], run["id"]])
+        self.assertEqual(store.get_check_run(run["id"])["label"], run["label"])
+        for bad in ([], [{"check": "env list check", "status": "pass", "evidence": "x"}], [{"check": "nope", "status": "pass", "evidence": "x"}],
+                    [{"check": "lint", "status": "maybe", "evidence": "x"}], [{"check": "lint", "status": "pass"}],
+                    [{"check": "lint", "status": "pass", "evidence": "x"}, {"check": "lint", "status": "fail", "evidence": "y"}]):
+            with self.assertRaises(ValueError):
+                store.record_check_run(self.agent, bad, folder="/home/me/code/site")
+        with self.assertRaises(ValueError):
+            store.record_check_run(self.agent, [{"check": "lint", "status": "pass", "evidence": "x"}])
+
+    def test_agents_can_propose_checks_but_they_wait_for_review(self):
+        store.update_route(self.site["id"], {"policy": "notes"})
+        result = store.propose(self.agent, {"action": "add", "route": "static-site", "kind": "check", "title": "a11y", "reason": "r"})
+        self.assertEqual(result["outcome"], "waiting_for_review")
+
+    def test_export_import_keeps_skips_and_includes(self):
+        store.add_skip(self.site["id"], {"check_id": self.envs["id"], "instead_id": self.preview["id"], "reason": "why"})
+        safety = self.project("Personal safety check")
+        store.add_include(safety["id"], {"route_id": self.gates["id"]})
+        counts = store.import_all(json.loads(json.dumps(store.export_all())))
+        self.assertEqual((counts["skips"], counts["includes"]), (1, 1))
+        copies = [r for r in store.list_routes() if r["name"] == "static-site"]
+        self.assertEqual([len(r["skips"]) for r in copies], [1, 1])
+        self.assertNotEqual(copies[0]["skips"][0]["check"]["id"], copies[1]["skips"][0]["check"]["id"])
 
 
 class MigrationTests(unittest.TestCase):
@@ -340,6 +439,23 @@ class MigrationTests(unittest.TestCase):
             for _ in range(store.BACKUPS_TO_KEEP + 2):
                 store.backup_database(conn, 0)
         self.assertEqual(len(self.backups()), store.BACKUPS_TO_KEEP)
+
+    def test_schema_2_database_gains_check_items(self):
+        ts = "2026-11-01T00:00:00Z"
+        old_schema = store.SCHEMA.replace(",'check')", ")").split("CREATE TABLE IF NOT EXISTS check_skips")[0]
+        with closing(sqlite3.connect(store.DB_PATH)) as conn:
+            conn.executescript(old_schema)
+            conn.execute("INSERT INTO routes (id, name, scope, created_at, updated_at) VALUES ('r1', 'app', 'project', ?, ?)", (ts, ts))
+            conn.execute("INSERT INTO items (id, route_id, kind, title, created_by, created_at, updated_at, last_used_at) "
+                         "VALUES ('i1', 'r1', 'rule', 'Keep', 'You', ?, ?, ?)", (ts, ts, ts))
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
+        store.init_db()
+        self.assertEqual(len(self.backups()), 1)
+        items = store.list_items("r1")
+        self.assertEqual((items[0]["title"], items[0]["last_used_at"]), ("Keep", ts))
+        store.create_item("r1", {"kind": "check", "title": "env list check"})
+        self.assertEqual(store.plan_checks(route_ref="app")["checks"][0]["name"], "env list check")
 
     def test_migrates_a_0_1_database(self):
         ts = "2026-09-17T00:00:00Z"

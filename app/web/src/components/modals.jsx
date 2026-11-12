@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Modal, RadioButton, RadioButtonGroup, Select, SelectItem, TextArea, TextInput } from "@carbon/react";
 import { KIND_LABELS, POLICY_LABELS, SCOPE_LABELS } from "../util.js";
-import { ErrorNote } from "./common.jsx";
+import { ErrorNote, Loading } from "./common.jsx";
+import { api } from "../api.js";
+import { useResource } from "../util.js";
 
 /** Shared submit plumbing: busy state and an error shown inside the modal. */
 function useSubmit(onSubmit, onClose) {
@@ -130,6 +132,63 @@ export function MoveModal({ item, routes, onSubmit, onClose }) {
           ))}
         </Select>
         <ErrorNote error={error} title="Couldn't move it" />
+      </div>
+    </Modal>
+  );
+}
+
+export function SkipModal({ route, onSubmit, onClose }) {
+  const checks = useResource(() => api.checks(), []);
+  const [checkId, setCheckId] = useState("");
+  const [insteadId, setInsteadId] = useState("");
+  const [reason, setReason] = useState("");
+  const { busy, error, submit } = useSubmit(onSubmit, onClose);
+  const skipped = new Set(route.skips.map((skip) => skip.check?.id));
+  const options = (checks.data?.checks || []).filter((check) => !skipped.has(check.id));
+  return (
+    <Modal
+      open
+      modalHeading={`Skip a check in “${route.name}”`}
+      primaryButtonText="Skip check"
+      secondaryButtonText="Cancel"
+      primaryButtonDisabled={busy || !checkId || !reason.trim()}
+      onRequestClose={onClose}
+      onRequestSubmit={() => submit({ check_id: checkId, instead_id: insteadId, reason })}
+      size="md"
+    >
+      <div className="dt-stack">
+        <p className="dt-muted">Wherever this route applies, agents won't run the skipped check. Every run records the skip and your reason.</p>
+        <ErrorNote error={checks.error} title="Couldn't load checks" />
+        {checks.data ? (
+          <>
+            <Select id="skip-check" labelText="Check to skip" value={checkId} onChange={(e) => setCheckId(e.target.value)}>
+              <SelectItem value="" text={options.length ? "Choose a check" : "No checks to skip"} />
+              {options.map((check) => (
+                <SelectItem key={check.id} value={check.id} text={`${check.name} (${check.route})`} />
+              ))}
+            </Select>
+            <Select id="skip-instead" labelText="Run instead (optional)" value={insteadId} onChange={(e) => setInsteadId(e.target.value)}>
+              <SelectItem value="" text="Nothing, just skip it" />
+              {checks.data.checks
+                .filter((check) => check.id !== checkId)
+                .map((check) => (
+                  <SelectItem key={check.id} value={check.id} text={`${check.name} (${check.route})`} />
+                ))}
+            </Select>
+          </>
+        ) : (
+          <Loading />
+        )}
+        <TextArea
+          id="skip-reason"
+          labelText="Why it doesn't apply here"
+          helperText="Shown in every run, so whoever reads the results knows the skip was deliberate."
+          rows={3}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={2000}
+        />
+        <ErrorNote error={error} title="Couldn't add the skip" />
       </div>
     </Modal>
   );

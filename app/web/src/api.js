@@ -43,6 +43,15 @@ export const api = {
   restoreItem: (id) => request("POST", `/api/items/${encodeURIComponent(id)}/restore`, {}),
   moveItem: (id, routeId) => request("POST", `/api/items/${encodeURIComponent(id)}/move`, { route_id: routeId }),
 
+  routeChecks: (id) => request("GET", `/api/routes/${encodeURIComponent(id)}/checks`),
+  checks: () => request("GET", "/api/checks"),
+  addSkip: (routeId, body) => request("POST", `/api/routes/${encodeURIComponent(routeId)}/skips`, body),
+  removeSkip: (id) => request("POST", `/api/skips/${encodeURIComponent(id)}/remove`, {}),
+  addInclude: (routeId, includedId) => request("POST", `/api/routes/${encodeURIComponent(routeId)}/includes`, { route_id: includedId }),
+  removeInclude: (routeId, includedId) =>
+    request("POST", `/api/routes/${encodeURIComponent(routeId)}/includes/${encodeURIComponent(includedId)}/remove`, {}),
+  checkRuns: () => request("GET", "/api/check-runs"),
+
   addTarget: (routeId, body) => request("POST", `/api/routes/${encodeURIComponent(routeId)}/targets`, body),
   removeTarget: (id) => request("POST", `/api/targets/${encodeURIComponent(id)}/remove`, {}),
 

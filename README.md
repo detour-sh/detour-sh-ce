@@ -120,14 +120,16 @@ Detour gives agents these tools:
 | `search_context` | Searches item titles and text. |
 | `propose_change` | Proposes adding, editing, retiring or moving an item, or creating a route. |
 | `get_proposal`, `list_my_proposals` | Check whether a proposal was approved, and read your note if it was rejected. |
+| `get_checks` | Lists the checks to verify here, and the ones a route skips. |
+| `report_check_results` | Records pass or fail for each check and returns a summary to show you. |
 
 Cloud-hosted agents can't reach `127.0.0.1`, so only tools running on the same
 machine can connect.
 
 ## Organize context
 
-A **route** is a named set of context. It holds items: rules, decisions,
-runbooks, prompts, notes and references.
+A **route** is a named set of context. It holds items: rules, checks,
+decisions, runbooks, prompts, notes and references.
 
 - **Global route:** applies to all of your work.
 - **Project route:** applies wherever one of its targets matches. A target can
@@ -137,6 +139,37 @@ runbooks, prompts, notes and references.
 
 When context overlaps, Global outranks Project, and Project outranks
 Sub-detour.
+
+## Checks
+
+You won't read every line an agent writes. A **check** says what has to be
+true, and the agent tells you whether it is: pass or fail, with the evidence it
+looked at.
+
+Add a check to a route like any other item. Its title names it and its text
+says what must hold, for example *env list check: the project defines dev,
+test, stage and prod environments*. Before an agent calls a task done, it calls
+`get_checks`, verifies each check against the actual work, and reports back
+with `report_check_results`. Your session shows a summary like this:
+
+```text
+Personal safety check: 1 passed, 1 failed, 1 skipped
+  ✓ env list check        infra/environments.tf defines dev, test, stage and prod.
+  ✗ prod release gates    The prod environment has no required reviewers.
+  ↷ preview deploy check  Skipped by api: An API has no preview deploys.
+```
+
+Every run is kept under **Check runs**. On a route's **Checks** tab you can:
+
+- **Include other routes.** Their checks run too, so one route, such as a
+  "Personal safety check", can run your environment checks and your release
+  gates together.
+- **Skip a check** that doesn't fit, with a reason, and optionally run another
+  check in its place. Only you can add skips. Agents can propose new checks,
+  but those always wait for your review.
+
+Detour never runs anything itself. The agent does the checking, and a check it
+couldn't verify counts as a fail.
 
 ## Review what agents propose
 

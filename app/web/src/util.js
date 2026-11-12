@@ -39,8 +39,10 @@ export function relativeTime(iso) {
 
 export const SCOPE_LABELS = { global: "Global", project: "Project", sub: "Sub-detour" };
 export const POLICY_LABELS = { ask: "Always ask", notes: "Notes auto-approve", read: "Read only" };
-export const KIND_LABELS = { rule: "Rule", decision: "Decision", runbook: "Runbook", prompt: "Prompt", note: "Note", reference: "Reference" };
-export const KIND_TAGS = { rule: "blue", decision: "purple", runbook: "teal", prompt: "green", note: "gray", reference: "cool-gray" };
+export const KIND_LABELS = { rule: "Rule", check: "Check", decision: "Decision", runbook: "Runbook", prompt: "Prompt", note: "Note", reference: "Reference" };
+export const KIND_TAGS = { rule: "blue", check: "magenta", decision: "purple", runbook: "teal", prompt: "green", note: "gray", reference: "cool-gray" };
+export const RESULT_TAGS = { runs: ["blue", "Runs"], pass: ["green", "Passed"], fail: ["red", "Failed"], not_run: ["warm-gray", "Not run"], skipped: ["gray", "Skipped"] };
+export const OUTCOME_TAGS = { passed: ["green", "Passed"], failed: ["red", "Failed"], incomplete: ["warm-gray", "Incomplete"] };
 export const TARGET_LABELS = { repo: "Repo", folder: "Folder", file: "File", topic: "Topic", artifact: "Artifact", url: "URL" };
 export const TARGET_TAGS = { repo: "blue", folder: "teal", file: "teal", topic: "purple", artifact: "green", url: "cool-gray" };
 export const TARGET_HELP = {

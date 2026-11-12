@@ -1,7 +1,10 @@
 """Detour's data model.
 
 A route is a named set of context. Items are the context itself (rules,
-decisions, runbooks, prompts, notes, references). Targets say where a route
+decisions, runbooks, prompts, notes, references, checks). A check is a named
+requirement an agent verifies and reports as pass or fail. A route can skip a
+check (optionally running another one instead) and can include other routes'
+checks, so one route can run a whole suite. Targets say where a route
 applies (a repo, a folder, a file, a topic, an artifact or a URL). Agents never
 write directly: they file proposals, and the route's policy decides whether a
 proposal waits for the user or applies at once. Every change to an item or a
@@ -25,14 +28,16 @@ DB_PATH = Path(os.environ.get("DETOUR_DB_PATH", str(DATA_DIR / "detour.sqlite"))
 NESTED_DETOURS_ENABLED = os.environ.get("DETOUR_ENABLE_NESTED_DETOURS", "false").lower() == "true"
 
 # Bump when init_db gains a migration. Databases at this version skip migrations.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BACKUPS_TO_KEEP = 5
 BUSY_TIMEOUT_SECONDS = 10
 STALE_AFTER_DAYS = 90
 
 SCOPES = ("global", "project", "sub")
 POLICIES = ("ask", "notes", "read")
-ITEM_KINDS = ("rule", "decision", "runbook", "prompt", "note", "reference")
+ITEM_KINDS = ("rule", "decision", "runbook", "prompt", "note", "reference", "check")
+CHECK_STATUSES = ("pass", "fail")
+MAX_RESULTS = 200
 TARGET_KINDS = ("repo", "folder", "file", "topic", "artifact", "url")
 PROPOSAL_ACTIONS = ("add", "edit", "retire", "move", "create_route")
 PROPOSAL_STATUSES = ("pending", "approved", "rejected", "auto")
@@ -109,7 +114,7 @@ CREATE TABLE IF NOT EXISTS routes (
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   route_id TEXT NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('rule','decision','runbook','prompt','note','reference')),
+  kind TEXT NOT NULL CHECK (kind IN ('rule','decision','runbook','prompt','note','reference','check')),
   title TEXT NOT NULL,
   body TEXT NOT NULL DEFAULT '',
   pinned INTEGER NOT NULL DEFAULT 0,
@@ -166,6 +171,38 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_route ON events(route_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 
+CREATE TABLE IF NOT EXISTS check_skips (
+  id TEXT PRIMARY KEY,
+  route_id TEXT NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+  check_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  instead_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE (route_id, check_id)
+);
+
+CREATE TABLE IF NOT EXISTS route_includes (
+  route_id TEXT NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+  included_id TEXT NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (route_id, included_id)
+);
+
+CREATE TABLE IF NOT EXISTS check_runs (
+  id TEXT PRIMARY KEY,
+  key_id TEXT,
+  agent TEXT NOT NULL,
+  label TEXT NOT NULL,
+  scope_json TEXT NOT NULL,
+  results_json TEXT NOT NULL,
+  passed INTEGER NOT NULL,
+  failed INTEGER NOT NULL,
+  skipped INTEGER NOT NULL,
+  not_run INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_check_runs_created ON check_runs(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS mcp_access_keys (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -215,6 +252,7 @@ def init_db() -> None:
     with db() as conn:
         conn.execute("PRAGMA foreign_keys = OFF")
         legacy = _rename_legacy_tables(conn)
+        _allow_check_items(conn)
         conn.executescript(SCHEMA)
         if legacy:
             _migrate_legacy(conn, legacy)
@@ -257,6 +295,18 @@ def _rename_legacy_tables(conn) -> dict[str, str]:
         conn.execute("ALTER TABLE mcp_access_keys ADD COLUMN can_propose INTEGER NOT NULL DEFAULT 0")
         legacy["keys"] = "mcp_access_keys"
     return legacy
+
+
+def _allow_check_items(conn) -> None:
+    """Schema 3 added the check kind. SQLite can't alter a CHECK constraint, so rebuild items."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items'").fetchone()
+    if row is None or "'check'" in row["sql"]:
+        return
+    conn.execute("ALTER TABLE items RENAME TO items_v2")
+    conn.execute("DROP INDEX IF EXISTS idx_items_route")
+    conn.executescript(SCHEMA)
+    conn.execute(f"INSERT INTO items ({', '.join(ITEM_FIELDS)}, last_used_at) SELECT {', '.join(ITEM_FIELDS)}, last_used_at FROM items_v2")
+    conn.execute("DROP TABLE items_v2")
 
 
 LEGACY_TYPE_TO_KIND = {
@@ -514,6 +564,10 @@ def _route_dict(conn, row) -> dict:
     parent = conn.execute("SELECT id, name FROM routes WHERE id = ?", (row["parent_id"],)).fetchone() if row["parent_id"] else None
     route["parent"] = dict(parent) if parent else None
     route["children"] = [dict(c) for c in conn.execute("SELECT id, name FROM routes WHERE parent_id = ? ORDER BY sort_order, name", (row["id"],))]
+    route["includes"] = [dict(r) for r in conn.execute(
+        "SELECT routes.id, routes.name, routes.scope FROM route_includes JOIN routes ON routes.id = route_includes.included_id "
+        "WHERE route_includes.route_id = ? ORDER BY routes.name COLLATE NOCASE", (row["id"],))]
+    route["skips"] = [_skip_dict(conn, s) for s in conn.execute("SELECT * FROM check_skips WHERE route_id = ? ORDER BY created_at", (row["id"],))]
     return route
 
 
@@ -1133,29 +1187,33 @@ def find_routes(folder: str = "", repo: str = "", topic: str = "", file: str = "
                  "parent_id": r["parent_id"], "matched_by": reasons} for r, reasons in matched]
 
 
+def _layers(conn, route_ref: str, folder: str, repo: str, topic: str, file: str, url: str) -> list:
+    """The routes that apply, highest authority first: Global, then Project, then Sub-detour."""
+    if route_ref:
+        selected = _require_route(conn, route_ref)
+        chain = []
+        row = selected
+        while row is not None:
+            chain.append(row)
+            row = conn.execute("SELECT * FROM routes WHERE id = ?", (row["parent_id"],)).fetchone() if row["parent_id"] else None
+        globals_ = [] if selected["scope"] == "global" else conn.execute("SELECT * FROM routes WHERE scope = 'global' ORDER BY sort_order").fetchall()
+        return list(globals_) + list(reversed(chain))
+    matched_ids = [r["id"] for r in find_routes(folder, repo, topic, file, url)]
+    ids = list(matched_ids)
+    for route_id in matched_ids:  # a matching Sub-detour brings its parent
+        parent = conn.execute("SELECT parent_id FROM routes WHERE id = ?", (route_id,)).fetchone()["parent_id"]
+        if parent and parent not in ids:
+            ids.append(parent)
+    rows = [conn.execute("SELECT * FROM routes WHERE id = ?", (route_id,)).fetchone() for route_id in ids]
+    order = {"global": 0, "project": 1, "sub": 2}
+    return sorted(rows, key=lambda r: (order[r["scope"]], r["sort_order"]))
+
+
 def get_context(route_ref: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "", url: str = "",
                 mark_used: bool = True) -> dict:
     """Merge Global, Project and Sub-detour context in precedence order."""
     with db() as conn:
-        if route_ref:
-            selected = _require_route(conn, route_ref)
-            chain = []
-            row = selected
-            while row is not None:
-                chain.append(row)
-                row = conn.execute("SELECT * FROM routes WHERE id = ?", (row["parent_id"],)).fetchone() if row["parent_id"] else None
-            globals_ = [] if selected["scope"] == "global" else conn.execute("SELECT * FROM routes WHERE scope = 'global' ORDER BY sort_order").fetchall()
-            layers = list(globals_) + list(reversed(chain))
-        else:
-            matched_ids = [r["id"] for r in find_routes(folder, repo, topic, file, url)]
-            ids = list(matched_ids)
-            for route_id in matched_ids:  # a matching Sub-detour brings its parent
-                parent = conn.execute("SELECT parent_id FROM routes WHERE id = ?", (route_id,)).fetchone()["parent_id"]
-                if parent and parent not in ids:
-                    ids.append(parent)
-            rows = [conn.execute("SELECT * FROM routes WHERE id = ?", (route_id,)).fetchone() for route_id in ids]
-            order = {"global": 0, "project": 1, "sub": 2}
-            layers = sorted(rows, key=lambda r: (order[r["scope"]], r["sort_order"]))
+        layers = _layers(conn, route_ref, folder, repo, topic, file, url)
         result_layers, used = [], []
         for rank, route in enumerate(layers, start=1):
             if route["paused"]:
@@ -1190,6 +1248,275 @@ def search_items(query: str, limit: int = 20) -> list[dict]:
             (pattern, pattern, max(1, min(limit, 50))),
         ).fetchall()
         return [{"id": r["id"], "route": r["route_name"], "route_id": r["route_id"], "kind": r["kind"], "title": r["title"], "preview": r["body"][:240]} for r in rows]
+
+
+# ---------------------------------------------------------------- checks
+#
+# A check is an item of kind "check": its title names it and its body says what
+# must be true. Agents verify checks and report pass or fail. Detour decides which
+# checks apply (routes, includes and skips) and keeps the results; it never runs
+# anything itself.
+
+RESULT_ICONS = {"pass": "✓", "fail": "✗", "not_run": "?", "skipped": "↷"}
+
+
+def _check_row(conn, check_id: str):
+    row = conn.execute("SELECT * FROM items WHERE id = ? AND kind = 'check'", (check_id,)).fetchone()
+    if row is None:
+        raise KeyError("check not found")
+    return row
+
+
+def _skip_dict(conn, row) -> dict:
+    def brief(item_id):
+        if not item_id:
+            return None
+        found = conn.execute(
+            "SELECT items.id, items.title, items.status, routes.name AS route FROM items JOIN routes ON routes.id = items.route_id WHERE items.id = ?",
+            (item_id,),
+        ).fetchone()
+        return {"id": found["id"], "name": found["title"], "route": found["route"], "retired": found["status"] != "active"} if found else None
+
+    return {"id": row["id"], "route_id": row["route_id"], "check": brief(row["check_id"]), "instead": brief(row["instead_id"]),
+            "reason": row["reason"], "created_at": row["created_at"]}
+
+
+def list_checks() -> list[dict]:
+    """Every active check, for choosing one to skip or to run instead."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT items.id, items.title, items.body, items.route_id, routes.name AS route FROM items JOIN routes ON routes.id = items.route_id "
+            "WHERE items.kind = 'check' AND items.status = 'active' ORDER BY routes.sort_order, items.title COLLATE NOCASE"
+        ).fetchall()
+        return [{"id": r["id"], "name": r["title"], "requirement": r["body"], "route_id": r["route_id"], "route": r["route"]} for r in rows]
+
+
+def add_skip(route_ref: str, payload: dict, actor: str = YOU) -> dict:
+    """Skip a check wherever this route applies, and optionally run another check instead."""
+    with db() as conn:
+        route = _require_route(conn, route_ref)
+        check = _check_row(conn, _text(payload, "check_id", 64, required=True))
+        instead_id = _text(payload, "instead_id", 64) or None
+        instead = None
+        if instead_id:
+            instead = _check_row(conn, instead_id)
+            if instead["id"] == check["id"]:
+                raise ValueError("a check can't run instead of itself")
+        reason = _text(payload, "reason", MAX_TEXT, required=True)
+        if conn.execute("SELECT 1 FROM check_skips WHERE route_id = ? AND check_id = ?", (route["id"], check["id"])).fetchone():
+            raise Conflict("This route already skips that check.")
+        skip_id = make_id()
+        conn.execute(
+            "INSERT INTO check_skips (id, route_id, check_id, instead_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (skip_id, route["id"], check["id"], instead_id, reason, now_iso()),
+        )
+        summary = f"Skips check “{check['title']}”" + (f" and runs “{instead['title']}” instead" if instead else "")
+        _record(conn, "skip", skip_id, route["id"], "add", actor, summary)
+        return _skip_dict(conn, conn.execute("SELECT * FROM check_skips WHERE id = ?", (skip_id,)).fetchone())
+
+
+def remove_skip(skip_id: str, actor: str = YOU) -> None:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM check_skips WHERE id = ?", (skip_id,)).fetchone()
+        if row is None:
+            raise KeyError("skip not found")
+        skip = _skip_dict(conn, row)
+        name = skip["check"]["name"] if skip["check"] else "a deleted check"
+        _record(conn, "skip", skip_id, row["route_id"], "remove", actor, f"Stopped skipping check “{name}”")
+        conn.execute("DELETE FROM check_skips WHERE id = ?", (skip_id,))
+
+
+def _included_ids(conn, route_id: str) -> set[str]:
+    """Every route reachable through includes from route_id, not counting itself."""
+    found: set[str] = set()
+    queue = [route_id]
+    while queue:
+        current = queue.pop()
+        for row in conn.execute("SELECT included_id FROM route_includes WHERE route_id = ?", (current,)):
+            if row["included_id"] not in found:
+                found.add(row["included_id"])
+                queue.append(row["included_id"])
+    return found
+
+
+def add_include(route_ref: str, payload: dict, actor: str = YOU) -> dict:
+    """Run another route's checks whenever this route's checks run."""
+    with db() as conn:
+        route = _require_route(conn, route_ref)
+        included = _require_route(conn, _text(payload, "route_id", MAX_TITLE, required=True))
+        if included["id"] == route["id"]:
+            raise ValueError("a route can't include itself")
+        if route["id"] in _included_ids(conn, included["id"]):
+            raise ValueError(f"“{included['name']}” already includes “{route['name']}”, so this would loop")
+        if conn.execute("SELECT 1 FROM route_includes WHERE route_id = ? AND included_id = ?", (route["id"], included["id"])).fetchone():
+            raise Conflict(f"“{route['name']}” already includes “{included['name']}”.")
+        conn.execute("INSERT INTO route_includes (route_id, included_id, created_at) VALUES (?, ?, ?)", (route["id"], included["id"], now_iso()))
+        _record(conn, "include", included["id"], route["id"], "add", actor, f"Included checks from “{included['name']}”")
+        return _route_dict(conn, conn.execute("SELECT * FROM routes WHERE id = ?", (route["id"],)).fetchone())
+
+
+def remove_include(route_ref: str, included_ref: str, actor: str = YOU) -> dict:
+    with db() as conn:
+        route = _require_route(conn, route_ref)
+        included = _require_route(conn, included_ref)
+        deleted = conn.execute("DELETE FROM route_includes WHERE route_id = ? AND included_id = ?", (route["id"], included["id"])).rowcount
+        if not deleted:
+            raise KeyError("include not found")
+        _record(conn, "include", included["id"], route["id"], "remove", actor, f"Stopped including checks from “{included['name']}”")
+        return _route_dict(conn, conn.execute("SELECT * FROM routes WHERE id = ?", (route["id"],)).fetchone())
+
+
+def _plan_label(conn, route_ref, folder, repo, topic, file, url) -> str:
+    if route_ref:
+        return _require_route(conn, route_ref)["name"]
+    where = next((value for value in (repo, folder, file, url, topic) if value), "")
+    return f"Checks for {where}" if where else "Checks"
+
+
+def _plan(conn, route_ref="", folder="", repo="", topic="", file="", url="") -> dict:
+    """Work out which checks apply: matching routes, plus the routes they include, minus skips."""
+    routes, via, seen = [], {}, set()
+    queue = [(row, None) for row in _layers(conn, route_ref, folder, repo, topic, file, url)]
+    while queue:
+        row, parent = queue.pop(0)
+        if row["id"] in seen or row["paused"]:
+            continue
+        seen.add(row["id"])
+        routes.append(row)
+        via[row["id"]] = parent
+        for included in conn.execute(
+            "SELECT routes.* FROM route_includes JOIN routes ON routes.id = route_includes.included_id "
+            "WHERE route_includes.route_id = ? ORDER BY routes.sort_order", (row["id"],)
+        ):
+            queue.append((included, row["name"]))
+    plan = {"label": _plan_label(conn, route_ref, folder, repo, topic, file, url), "routes": [r["name"] for r in routes], "checks": [], "skipped": []}
+    if not routes:
+        return plan
+    ids = [r["id"] for r in routes]
+    marks = ", ".join("?" for _ in ids)
+    position = {route_id: index for index, route_id in enumerate(ids)}
+    checks = conn.execute(
+        f"SELECT items.*, routes.name AS route FROM items JOIN routes ON routes.id = items.route_id "
+        f"WHERE items.route_id IN ({marks}) AND items.kind = 'check' AND items.status = 'active'", ids
+    ).fetchall()
+    checks = sorted(checks, key=lambda c: (position[c["route_id"]], c["title"].casefold()))
+    skip_for = {}
+    for skip in conn.execute(
+        f"SELECT check_skips.*, routes.name AS route FROM check_skips JOIN routes ON routes.id = check_skips.route_id "
+        f"WHERE check_skips.route_id IN ({marks}) ORDER BY check_skips.created_at", ids
+    ):
+        skip_for.setdefault(skip["check_id"], skip)
+
+    def entry(row, instead_of=None):
+        return {"id": row["id"], "name": row["title"], "requirement": row["body"], "route": row["route"],
+                "included_by": via.get(row["route_id"]), "instead_of": instead_of}
+
+    skipped = [(check, skip_for[check["id"]]) for check in checks if check["id"] in skip_for]
+    plan["checks"] = [entry(check) for check in checks if check["id"] not in skip_for]
+    planned = {check["id"] for check in plan["checks"]}
+    for check, skip in skipped:
+        instead = conn.execute(
+            "SELECT items.*, routes.name AS route FROM items JOIN routes ON routes.id = items.route_id "
+            "WHERE items.id = ? AND items.status = 'active'", (skip["instead_id"],)
+        ).fetchone() if skip["instead_id"] else None
+        plan["skipped"].append({"id": check["id"], "name": check["title"], "route": check["route"], "skipped_by": skip["route"],
+                                "reason": skip["reason"], "instead": instead["title"] if instead else None})
+        # A replacement runs even if its own route doesn't apply here, unless it is itself skipped.
+        if instead and instead["id"] not in planned and instead["id"] not in skip_for:
+            plan["checks"].append(entry(instead, instead_of=check["title"]))
+            planned.add(instead["id"])
+    return plan
+
+
+def plan_checks(route_ref: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "", url: str = "") -> dict:
+    with db() as conn:
+        return _plan(conn, route_ref, folder, repo, topic, file, url)
+
+
+def _one_line(text: str, limit: int = 160) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _run_summary(label: str, results: list[dict], counts: dict) -> str:
+    parts = [f"{counts[key]} {word}" for key, word in (("passed", "passed"), ("failed", "failed"), ("not_run", "not run"), ("skipped", "skipped")) if counts[key]]
+    lines = [f"{label}: {', '.join(parts) or 'no checks apply'}"]
+    width = max((len(r["name"]) for r in results), default=0)
+    lines += [f"  {RESULT_ICONS[r['status']]} {r['name'].ljust(width)}  {_one_line(r['evidence'])}" for r in results]
+    return "\n".join(lines)
+
+
+def _run_dict(row) -> dict:
+    results = json.loads(row["results_json"])
+    counts = {key: row[key] for key in ("passed", "failed", "skipped", "not_run")}
+    outcome = "failed" if counts["failed"] else "incomplete" if counts["not_run"] else "passed"
+    return {"id": row["id"], "agent": row["agent"], "label": row["label"], "scope": json.loads(row["scope_json"]), "outcome": outcome,
+            **counts, "results": results, "created_at": row["created_at"], "summary": _run_summary(row["label"], results, counts)}
+
+
+def record_check_run(key: dict, results, route_ref: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "", url: str = "") -> dict:
+    """Save an agent's pass or fail for each check that applies. Checks it didn't report are recorded as not run."""
+    if not isinstance(results, list) or not results:
+        raise ValueError("results must be a list of {check, status, evidence}")
+    if len(results) > MAX_RESULTS:
+        raise ValueError(f"report at most {MAX_RESULTS} results at once")
+    scope = {name: value for name, value in (("route", route_ref), ("folder", folder), ("repo", repo), ("topic", topic), ("file", file), ("url", url)) if value}
+    if not scope:
+        raise ValueError("Pass the same route, or folder, repo, topic, file or url, that you passed to get_checks.")
+    with db() as conn:
+        plan = _plan(conn, route_ref, folder, repo, topic, file, url)
+        by_id = {c["id"]: c for c in plan["checks"]}
+        by_name = {c["name"].casefold(): c for c in plan["checks"]}
+        skipped_names = {s["name"].casefold() for s in plan["skipped"]} | {s["id"] for s in plan["skipped"]}
+        verdicts: dict[str, tuple[str, str]] = {}
+        for result in results:
+            if not isinstance(result, dict):
+                raise ValueError("each result must be an object with check, status and evidence")
+            ref = _text(result, "check", MAX_TITLE, required=True)
+            check = by_id.get(ref) or by_name.get(ref.casefold())
+            if check is None:
+                if ref in skipped_names or ref.casefold() in skipped_names:
+                    raise ValueError(f"“{ref}” is skipped here, so don't report it.")
+                raise ValueError(f"“{ref}” isn't one of the checks that apply here. Call get_checks for the list.")
+            status = _choice(str(result.get("status", "")).strip().lower(), CHECK_STATUSES, "status")
+            evidence = _text(result, "evidence", MAX_TEXT, required=True)
+            if check["id"] in verdicts:
+                raise ValueError(f"“{check['name']}” was reported twice")
+            verdicts[check["id"]] = (status, evidence)
+        rows = []
+        for check in plan["checks"]:
+            status, evidence = verdicts.get(check["id"], ("not_run", "No result was reported."))
+            rows.append({"check_id": check["id"], "name": check["name"], "route": check["route"], "status": status, "evidence": evidence,
+                         "instead_of": check["instead_of"]})
+        for skip in plan["skipped"]:
+            reason = f"Skipped by {skip['skipped_by']}: {skip['reason']}" + (f" Runs “{skip['instead']}” instead." if skip["instead"] else "")
+            rows.append({"check_id": skip["id"], "name": skip["name"], "route": skip["route"], "status": "skipped", "evidence": reason, "instead_of": None})
+        counts = {"passed": sum(r["status"] == "pass" for r in rows), "failed": sum(r["status"] == "fail" for r in rows),
+                  "skipped": sum(r["status"] == "skipped" for r in rows), "not_run": sum(r["status"] == "not_run" for r in rows)}
+        run_id = make_id()
+        stamp = now_iso()
+        conn.execute(
+            "INSERT INTO check_runs (id, key_id, agent, label, scope_json, results_json, passed, failed, skipped, not_run, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, key.get("id"), key.get("name") or "Agent", plan["label"], json.dumps(scope), json.dumps(rows),
+             counts["passed"], counts["failed"], counts["skipped"], counts["not_run"], stamp),
+        )
+        conn.executemany("UPDATE items SET last_used_at = ? WHERE id = ?", [(stamp, check_id) for check_id in verdicts])
+        return _run_dict(conn.execute("SELECT * FROM check_runs WHERE id = ?", (run_id,)).fetchone())
+
+
+def list_check_runs(limit: int = 50) -> list[dict]:
+    limit = max(1, min(int(limit), 200))
+    with db() as conn:
+        return [_run_dict(row) for row in conn.execute("SELECT * FROM check_runs ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,))]
+
+
+def get_check_run(run_id: str) -> dict:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM check_runs WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError("check run not found")
+        return _run_dict(row)
 
 
 # ---------------------------------------------------------------- access keys
@@ -1275,7 +1602,10 @@ def export_all() -> dict:
         routes = [dict(_snapshot(r, ROUTE_FIELDS), paused=bool(r["paused"])) for r in conn.execute("SELECT * FROM routes ORDER BY sort_order")]
         items = [dict(_snapshot(r, ITEM_FIELDS), pinned=bool(r["pinned"])) for r in conn.execute("SELECT * FROM items ORDER BY created_at")]
         targets = [_snapshot(r, TARGET_FIELDS) for r in conn.execute("SELECT * FROM targets ORDER BY created_at")]
-    return {"format": EXPORT_FORMAT, "exported_at": now_iso(), "routes": routes, "items": items, "targets": targets}
+        skips = [{key: r[key] for key in ("route_id", "check_id", "instead_id", "reason")} for r in conn.execute("SELECT * FROM check_skips ORDER BY created_at")]
+        includes = [{"route_id": r["route_id"], "included_id": r["included_id"]} for r in conn.execute("SELECT * FROM route_includes ORDER BY created_at")]
+    return {"format": EXPORT_FORMAT, "exported_at": now_iso(), "routes": routes, "items": items, "targets": targets,
+            "skips": skips, "includes": includes}
 
 
 def import_all(payload: dict, actor: str = YOU) -> dict:
@@ -1285,8 +1615,12 @@ def import_all(payload: dict, actor: str = YOU) -> dict:
     routes, items, targets = payload.get("routes"), payload.get("items"), payload.get("targets")
     if not all(isinstance(value, list) for value in (routes, items, targets)):
         raise ValueError("routes, items and targets must be lists")
+    skips, includes = payload.get("skips") or [], payload.get("includes") or []
+    if not all(isinstance(value, list) for value in (skips, includes)):
+        raise ValueError("skips and includes must be lists")
     with db() as conn:
         id_map: dict[str, str] = {}
+        item_map: dict[str, str] = {}
         ordered = sorted(routes, key=lambda r: 0 if not r.get("parent_id") else 1)
         for route in ordered:
             if not isinstance(route, dict):
@@ -1307,8 +1641,23 @@ def import_all(payload: dict, actor: str = YOU) -> dict:
             state = _new_item_state(id_map[item["route_id"]], item, actor)
             state["status"] = "retired" if item.get("status") == "retired" else "active"
             _change(conn, "item", None, state, "add", actor, f"Imported {state['kind']} “{state['title']}”")
+            if item.get("id"):
+                item_map[item["id"]] = state["id"]
         for target in targets:
             if not isinstance(target, dict) or target.get("route_id") not in id_map:
                 raise ValueError("each target must belong to a route in the export")
             add_target(id_map[target["route_id"]], target, actor, conn)
-    return {"routes": len(id_map), "items": len(items), "targets": len(targets)}
+        for skip in skips:
+            if not isinstance(skip, dict) or skip.get("route_id") not in id_map or skip.get("check_id") not in item_map:
+                raise ValueError("each skip must belong to a route and a check in the export")
+            conn.execute(
+                "INSERT OR IGNORE INTO check_skips (id, route_id, check_id, instead_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (make_id(), id_map[skip["route_id"]], item_map[skip["check_id"]], item_map.get(skip.get("instead_id") or ""),
+                 _text(skip, "reason", MAX_TEXT), now_iso()),
+            )
+        for include in includes:
+            if not isinstance(include, dict) or include.get("route_id") not in id_map or include.get("included_id") not in id_map:
+                raise ValueError("each include must name two routes in the export")
+            conn.execute("INSERT OR IGNORE INTO route_includes (route_id, included_id, created_at) VALUES (?, ?, ?)",
+                         (id_map[include["route_id"]], id_map[include["included_id"]], now_iso()))
+    return {"routes": len(id_map), "items": len(items), "targets": len(targets), "skips": len(skips), "includes": len(includes)}

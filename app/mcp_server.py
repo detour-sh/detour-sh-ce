@@ -56,7 +56,8 @@ def agent_errors(func):
         try:
             return func(*args, **kwargs)
         except KeyError as exc:
-            raise ValueError(f"{str(exc).strip(chr(39))}. Call find_routes or search_context to look it up.") from exc
+            hint = "Call get_checks for the list." if "check" in str(exc) else "Call find_routes or search_context to look it up."
+            raise ValueError(f"{str(exc).strip(chr(39))}. {hint}") from exc
         except (store.Forbidden, store.Conflict) as exc:
             raise ValueError(str(exc)) from exc
     return wrapper
@@ -77,13 +78,16 @@ mcp = MCPServer(
         "At the start of a task call get_context with the folder, repo or topic you are working on. "
         "Global outranks Project, and Project outranks Sub-detour. "
         "When you learn something the user will want next time (a rule they repeat, a decision, a fix to an outdated runbook), "
-        "call propose_change with a short reason. The user reviews proposals in the Detour portal; don't ask them to copy anything by hand."
+        "call propose_change with a short reason. The user reviews proposals in the Detour portal; don't ask them to copy anything by hand. "
+        "Before you call a task done, call get_checks for the same folder, repo or route, verify each check against the actual work, "
+        "then call report_check_results and show the user the summary it returns. A check you couldn't verify is a fail, not a pass."
     ),
     **options,
 )
 READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 # Not idempotent: on a route that auto-approves notes, sending the same note twice adds it twice.
 PROPOSE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+REPORT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 
 
 @mcp.tool(annotations=READ)
@@ -163,6 +167,36 @@ def propose_change(
         payload.update({"name": name, "scope": scope, "parent": parent, "description": description, "targets": targets or []})
     result = store.propose(current_key(), payload)
     return {key: result[key] for key in ("id", "outcome", "status", "action", "route", "to_route", "proposed", "decision_note")}
+
+
+@mcp.tool(annotations=READ)
+@agent_errors
+def get_checks(route: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "", url: str = "") -> dict:
+    """List the checks the user wants verified here: named requirements that must pass. Name a route (such as a check suite
+    like "Personal safety check"), or describe where you are working with folder, repo, topic, file or url.
+    Checks a route skips are listed under "skipped" with the reason; don't run those. Verify each check in "checks" against
+    the real state of the work (read files, run commands), then call report_check_results with the same arguments."""
+    if not any((route, folder, repo, topic, file, url)):
+        raise ValueError("Pass a route, or the folder, repo, topic, file or url you are working on.")
+    if route:
+        found = store.get_route(route)
+        if found and found["paused"]:
+            raise ValueError(f"Agent access to “{found['name']}” is paused by the user.")
+    return store.plan_checks(route, folder, repo, topic, file, url)
+
+
+@mcp.tool(annotations=REPORT)
+@agent_errors
+def report_check_results(results: list[dict], route: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "",
+                         url: str = "") -> dict:
+    """Record the result of each check from get_checks. Pass the same route, folder, repo, topic, file or url.
+
+    results: one entry per check, [{"check": name or ID, "status": "pass" or "fail", "evidence": one or two sentences}].
+    Evidence says what you looked at, such as "environments.tf defines dev, test, stage and prod".
+    A check you couldn't verify is a fail. Checks you leave out are recorded as not run.
+
+    Show the user the returned "summary" as is. Recording results never changes the user's context."""
+    return store.record_check_run(current_key(), results, route, folder, repo, topic, file, url)
 
 
 @mcp.tool(annotations=READ)

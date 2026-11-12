@@ -421,3 +421,8 @@ body {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+// Check runs: let results use the full width of the accordion
+.dt-runs .cds--accordion__content {
+  padding-inline-end: $spacing-05;
+}
