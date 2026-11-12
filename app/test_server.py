@@ -92,6 +92,45 @@ class PortalApiTests(unittest.TestCase):
         _, data, _ = self.request(f"/api/routes/{route['id']}/context")
         self.assertEqual(data["layers"][0]["items"][0]["body"], "changed by hand")
 
+    def test_checks_skips_includes_and_runs_over_http(self):
+        _, data, _ = self.request("/api/routes", "POST", {"name": "Global", "scope": "global"})
+        glob = data["route"]
+        _, data, _ = self.request("/api/routes", "POST", {"name": "site", "targets": [{"kind": "folder", "value": "~/code/site"}]})
+        site = data["route"]
+        _, data, _ = self.request("/api/routes", "POST", {"name": "Personal safety check"})
+        suite = data["route"]
+        _, data, _ = self.request(f"/api/routes/{glob['id']}/items", "POST", {"kind": "check", "title": "env list check"})
+        envs = data["item"]
+        _, data, _ = self.request(f"/api/routes/{site['id']}/items", "POST", {"kind": "check", "title": "preview check"})
+        self.assertEqual([c["name"] for c in self.request("/api/checks")[1]["checks"]], ["env list check", "preview check"])
+
+        status, data, _ = self.request(f"/api/routes/{site['id']}/skips", "POST", {"check_id": envs["id"], "reason": "no envs"})
+        self.assertEqual(status, 201)
+        skip = data["skip"]
+        status, _, _ = self.request(f"/api/routes/{site['id']}/skips", "POST", {"check_id": envs["id"], "reason": "again"})
+        self.assertEqual(status, 409)
+        _, data, _ = self.request(f"/api/routes/{site['id']}/checks")
+        self.assertEqual(([c["name"] for c in data["checks"]], data["skipped"][0]["name"]), (["preview check"], "env list check"))
+        self.assertEqual(self.request(f"/api/routes/{site['id']}")[1]["route"]["skips"][0]["id"], skip["id"])
+        self.assertEqual(self.request(f"/api/skips/{skip['id']}/remove", "POST", {})[0], 200)
+
+        status, data, _ = self.request(f"/api/routes/{suite['id']}/includes", "POST", {"route_id": site["id"]})
+        self.assertEqual((status, [r["name"] for r in data["route"]["includes"]]), (201, ["site"]))
+        self.assertEqual(self.request(f"/api/routes/{site['id']}/includes", "POST", {"route_id": suite["id"]})[0], 400)
+        _, data, _ = self.request(f"/api/routes/{suite['id']}/checks")
+        self.assertEqual([c["name"] for c in data["checks"]], ["env list check", "preview check"])
+        _, data, _ = self.request(f"/api/routes/{suite['id']}/includes/{site['id']}/remove", "POST", {})
+        self.assertEqual(data["route"]["includes"], [])
+
+        key = store.create_key({"name": "Claude Code"})["access_key"]
+        run = store.record_check_run(key, [{"check": "env list check", "status": "fail", "evidence": "no stage"}], route_ref=suite["id"])
+        _, data, _ = self.request("/api/check-runs")
+        self.assertEqual([r["id"] for r in data["runs"]], [run["id"]])
+        _, data, _ = self.request(f"/api/check-runs/{run['id']}")
+        self.assertEqual(data["run"]["outcome"], "failed")
+        self.assertEqual(self.request("/api/check-runs/nope")[0], 404)
+        self.assertEqual(self.request("/checks")[0], 200)
+
     def test_items_targets_and_route_updates(self):
         _, data, _ = self.request("/api/routes", "POST", {"name": "a"})
         a = data["route"]["id"]

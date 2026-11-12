@@ -33,7 +33,7 @@ MAX_BODY_BYTES = 2_000_000
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "detour"}
 
 # Paths the single-page app handles. Anything else that isn't a file or the API is a 404.
-APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|activity|connections|settings)$")
+APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|checks|activity|connections|settings)$")
 
 SECURITY_HEADERS = {
     "content-security-policy": (
@@ -201,6 +201,14 @@ class DetourHandler(BaseHTTPRequestHandler):
                 return self.json({"target": store.add_target(route_id, body)}, created)
             if tail == ["context"] and method == "GET":
                 return self.json(store.get_context(route_ref=route_id, mark_used=False))
+            if tail == ["checks"] and method == "GET":
+                return self.json(store.plan_checks(route_ref=route_id))
+            if tail == ["skips"] and method == "POST":
+                return self.json({"skip": store.add_skip(route_id, body)}, created)
+            if tail == ["includes"] and method == "POST":
+                return self.json({"route": store.add_include(route_id, body)}, created)
+            if len(tail) == 3 and tail[0] == "includes" and tail[2] == "remove" and method == "POST":
+                return self.json({"route": store.remove_include(route_id, tail[1])})
             if tail == ["events"] and method == "GET":
                 return self.json({"events": store.list_events(route_id, int(params.get("limit", "100")))})
 
@@ -217,6 +225,17 @@ class DetourHandler(BaseHTTPRequestHandler):
             if tail == ["delete"] and method == "POST":
                 store.delete_item(item_id)
                 return self.json({"ok": True})
+
+        if head == "checks" and not rest and method == "GET":
+            return self.json({"checks": store.list_checks()})
+        if head == "skips" and len(rest) == 2 and rest[1] == "remove" and method == "POST":
+            store.remove_skip(rest[0])
+            return self.json({"ok": True})
+        if head == "check-runs" and method == "GET":
+            if not rest:
+                return self.json({"runs": store.list_check_runs(int(params.get("limit", "50")))})
+            if len(rest) == 1:
+                return self.json({"run": store.get_check_run(rest[0])})
 
         if head == "targets" and len(rest) == 2 and rest[1] == "remove" and method == "POST":
             store.remove_target(rest[0])

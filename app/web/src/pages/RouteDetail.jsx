@@ -9,6 +9,8 @@ import {
   OverflowMenu,
   OverflowMenuItem,
   RadioTile,
+  Select,
+  SelectItem,
   Tab,
   TabList,
   TabPanel,
@@ -31,10 +33,11 @@ import {
 import { Add, Pause, Play } from "@carbon/icons-react";
 import { api } from "../api.js";
 import { useSession, usePageTitle } from "../App.jsx";
+import CheckResults from "../components/CheckResults.jsx";
 import HistoryList from "../components/HistoryList.jsx";
 import TargetList from "../components/TargetList.jsx";
 import { ErrorNote, KindTag, Loading } from "../components/common.jsx";
-import { ConfirmModal, ItemModal, MoveModal, RouteModal } from "../components/modals.jsx";
+import { ConfirmModal, ItemModal, MoveModal, RouteModal, SkipModal } from "../components/modals.jsx";
 import { AppLink, useLinkHandler, useRouter } from "../router.jsx";
 import { SCOPE_LABELS, relativeTime, useResource } from "../util.js";
 
@@ -59,6 +62,7 @@ export default function RouteDetail({ routeId }) {
   const events = useResource(() => api.routeEvents(routeId), [routeId]);
   const routes = useResource(() => api.routes(), []);
   const keys = useResource(() => api.keys(), []);
+  const checks = useResource(() => api.routeChecks(routeId), [routeId]);
   const [tab, setTab] = useState(0);
   const [showRetired, setShowRetired] = useState(false);
   const [modal, setModal] = useState(null);
@@ -70,6 +74,7 @@ export default function RouteDetail({ routeId }) {
     detail.reload();
     events.reload();
     routes.reload();
+    checks.reload();
     refreshSession();
   };
   async function run(fn) {
@@ -150,6 +155,7 @@ export default function RouteDetail({ routeId }) {
           <Tabs selectedIndex={tab} onChange={({ selectedIndex }) => setTab(selectedIndex)}>
             <TabList aria-label="Route sections">
               <Tab>Context</Tab>
+              <Tab>Checks</Tab>
               <Tab>Applies to</Tab>
               <Tab>Agent access</Tab>
               <Tab>History</Tab>
@@ -235,6 +241,10 @@ export default function RouteDetail({ routeId }) {
                     </Button>
                   </div>
                 )}
+              </TabPanel>
+
+              <TabPanel className="dt-stack">
+                <RouteChecks route={route} plan={checks} routes={allRoutes} run={run} onSkip={() => setModal({ type: "skip" })} />
               </TabPanel>
 
               <TabPanel className="dt-stack">
@@ -368,7 +378,103 @@ export default function RouteDetail({ routeId }) {
         />
       ) : null}
       {modal?.type === "preview" ? <PreviewModal routeId={route.id} onClose={() => setModal(null)} /> : null}
+      {modal?.type === "skip" ? <SkipModal route={route} onClose={() => setModal(null)} onSubmit={async (payload) => { await api.addSkip(route.id, payload); reload(); }} /> : null}
     </div>
+  );
+}
+
+function RouteChecks({ route, plan, routes, run, onSkip }) {
+  const [includeId, setIncludeId] = useState("");
+  const included = new Set(route.includes.map((r) => r.id));
+  const candidates = routes.filter((r) => r.id !== route.id && !included.has(r.id) && r.scope !== "global");
+  const planned = plan.data
+    ? [
+        ...plan.data.checks.map((check) => ({ ...check, status: "runs", evidence: check.requirement })),
+        ...plan.data.skipped.map((skip) => ({
+          ...skip,
+          status: "skipped",
+          evidence: `Skipped by ${skip.skipped_by}: ${skip.reason}${skip.instead ? ` Runs “${skip.instead}” instead.` : ""}`,
+        })),
+      ]
+    : [];
+  return (
+    <>
+      <section>
+        <h2 className="dt-heading-03">Checks that run here</h2>
+        <p className="dt-muted">
+          When an agent asks for this route's checks, it verifies each one and reports pass or fail. Global checks always run. Included routes add
+          their checks, and skips take checks out.
+        </p>
+        <ErrorNote error={plan.error} title="Couldn't load the checks" />
+        {plan.data ? <CheckResults results={planned} label="Checks that run in this route" /> : plan.error ? null : <Loading />}
+      </section>
+
+      <section>
+        <h2 className="dt-heading-03">Also run checks from</h2>
+        <p className="dt-muted">Combine routes into one suite, such as a “Personal safety check” that runs your environment and release-gate checks together.</p>
+        {route.includes.length ? (
+          <ul className="dt-rows" aria-label="Included routes">
+            {route.includes.map((other) => (
+              <li key={other.id} className="dt-row">
+                <span className="dt-row-main">
+                  <AppLink href={`/routes/${other.id}`} className="cds--link">
+                    {other.name}
+                  </AppLink>
+                </span>
+                <Button kind="ghost" size="sm" onClick={() => run(() => api.removeInclude(route.id, other.id))}>
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="dt-form-row dt-gap-top">
+          <Select id="include-route" labelText="Route to include" value={includeId} onChange={(e) => setIncludeId(e.target.value)}>
+            <SelectItem value="" text={candidates.length ? "Choose a route" : "No other routes"} />
+            {candidates.map((other) => (
+              <SelectItem key={other.id} value={other.id} text={other.name} />
+            ))}
+          </Select>
+          <Button
+            kind="tertiary"
+            size="md"
+            disabled={!includeId}
+            onClick={() =>
+              run(async () => {
+                await api.addInclude(route.id, includeId);
+                setIncludeId("");
+              })
+            }
+          >
+            Include
+          </Button>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="dt-heading-03">Skipped here</h2>
+        <p className="dt-muted">Skip a check that doesn't fit this route, and optionally run a different check in its place. Only you can add skips; agents can't.</p>
+        {route.skips.length ? (
+          <ul className="dt-rows" aria-label="Skipped checks">
+            {route.skips.map((skip) => (
+              <li key={skip.id} className="dt-row">
+                <span className="dt-row-main">
+                  <strong>{skip.check?.name || "Deleted check"}</strong>
+                  {skip.instead ? <span className="dt-muted"> → runs “{skip.instead.name}” instead</span> : null}
+                  <div className="dt-body-01">{skip.reason}</div>
+                </span>
+                <Button kind="ghost" size="sm" onClick={() => run(() => api.removeSkip(skip.id))}>
+                  Stop skipping
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <Button kind="tertiary" size="md" className="dt-gap-top" renderIcon={Add} onClick={onSkip}>
+          Skip a check
+        </Button>
+      </section>
+    </>
   );
 }
 

@@ -13,13 +13,14 @@ import {
   SkipToContent,
   Tag,
 } from "@carbon/react";
-import { Activity, Connect, Flow, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
+import { Activity, CheckmarkOutline, Connect, Flow, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
 import { api } from "./api.js";
 import { useRouter } from "./router.jsx";
 import Review from "./pages/Review.jsx";
 import RoutesPage from "./pages/Routes.jsx";
 import RouteDetail from "./pages/RouteDetail.jsx";
 import ActivityPage from "./pages/Activity.jsx";
+import ChecksPage from "./pages/Checks.jsx";
 import Connections from "./pages/Connections.jsx";
 import SettingsPage from "./pages/Settings.jsx";
 import NotFound from "./pages/NotFound.jsx";
@@ -39,6 +40,7 @@ export function usePageTitle(title) {
 const NAV = [
   { href: "/", label: "Review", icon: TaskApproved, match: (p) => p === "/" || p === "/review" },
   { href: "/routes", label: "Routes", icon: Flow, match: (p) => p.startsWith("/routes") },
+  { href: "/checks", label: "Check runs", icon: CheckmarkOutline, match: (p) => p === "/checks" },
   { href: "/activity", label: "Activity", icon: Activity, match: (p) => p === "/activity" },
 ];
 const ACCESS_NAV = [
@@ -52,6 +54,7 @@ function page(path) {
   const routeMatch = path.match(/^\/routes\/([A-Za-z0-9_-]+)$/);
   // Keyed so moving between routes starts fresh; an open editor can't save into the route you left.
   if (routeMatch) return <RouteDetail key={routeMatch[1]} routeId={routeMatch[1]} />;
+  if (path === "/checks") return <ChecksPage />;
   if (path === "/activity") return <ActivityPage />;
   if (path === "/connections") return <Connections />;
   if (path === "/settings") return <SettingsPage />;

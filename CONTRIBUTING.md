@@ -36,7 +36,7 @@ with hot reload and sends API calls to the portal on port 3787.
 The portal follows Carbon so that it stays consistent and can be upgraded:
 
 - Use Carbon components. The only custom patterns are `ProposalCard`,
-  `TargetList` and `HistoryList` in `app/web/src/components`.
+  `TargetList`, `HistoryList` and `CheckResults` in `app/web/src/components`.
 - Use Carbon tokens for color, spacing and type in `styles.scss`. Don't
   hard-code colors, sizes or fonts.
 - The portal and the MCP server both go through `app/store.py`. Add behavior

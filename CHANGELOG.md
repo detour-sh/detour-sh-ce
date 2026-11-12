@@ -35,6 +35,12 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 
 ### Added
 
+- **Checks**: a new item kind for requirements an agent verifies and reports as
+  pass or fail. New MCP tools `get_checks` and `report_check_results`, a
+  **Check runs** page, and a **Checks** tab on each route where you can include
+  other routes' checks or skip a check (optionally running another instead).
+  Upgrading rebuilds the items table to allow the new kind, after the usual
+  backup.
 - **Review**: approve, edit or reject what agents propose, with their reason
   and a before-and-after view.
 - A review policy and a pause switch for each route.

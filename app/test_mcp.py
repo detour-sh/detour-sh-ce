@@ -73,12 +73,32 @@ class McpToolTests(unittest.TestCase):
         with self.as_key(reader), self.assertRaisesRegex(ValueError, "revoked"):
             self.mcp.propose_change("add", "r", route="app", title="x")
 
+    def test_get_checks_and_report_results(self):
+        store.create_item(self.app["id"], {"kind": "check", "title": "env list check", "body": "dev, test, stage, prod"})
+        plan = self.mcp.get_checks(folder="/home/me/code/app")
+        self.assertEqual([c["name"] for c in plan["checks"]], ["env list check"])
+        with self.assertRaises(ValueError):
+            self.mcp.get_checks()
+        reader = store.create_key({"name": "Reader", "can_propose": False})["access_key"]["id"]
+        with self.as_key(reader):  # results are a log, not a context change, so read-only keys may report
+            run = self.mcp.report_check_results([{"check": "env list check", "status": "pass", "evidence": "envs.tf has all four"}],
+                                                folder="/home/me/code/app")
+        self.assertEqual((run["outcome"], run["agent"]), ("passed", "Reader"))
+        self.assertIn("✓ env list check", run["summary"])
+        with self.as_key(reader), self.assertRaisesRegex(ValueError, "get_checks"):
+            self.mcp.report_check_results([{"check": "nope", "status": "pass", "evidence": "x"}], folder="/home/me/code/app")
+        store.update_route(self.app["id"], {"paused": True})
+        with self.assertRaisesRegex(ValueError, "paused"):
+            self.mcp.get_checks(route="app")
+
     def test_tools_are_annotated(self):
         tools = {tool.name: tool for tool in self.mcp.mcp._tool_manager.list_tools()} if hasattr(self.mcp.mcp, "_tool_manager") else None
         if tools is None:
             self.skipTest("tool manager not exposed by this MCP version")
         self.assertTrue(tools["get_context"].annotations.read_only_hint)
         self.assertFalse(tools["propose_change"].annotations.read_only_hint)
+        self.assertTrue(tools["get_checks"].annotations.read_only_hint)
+        self.assertFalse(tools["report_check_results"].annotations.destructive_hint)
         # A retried auto-approved note would be added twice, so clients must not retry blindly.
         self.assertFalse(tools["propose_change"].annotations.idempotent_hint)
 
