@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import netguard
 import store
 
 VERSION = "0.2.0"
@@ -31,6 +32,8 @@ BRAND_FILES = {
 }
 MAX_BODY_BYTES = 2_000_000
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "detour"}
+# Public-internet clients are refused unless DETOUR_ALLOW_PUBLIC_CLIENTS=true. See netguard.py.
+ALLOW_PUBLIC_CLIENTS = netguard.public_clients_allowed()
 
 # Paths the single-page app handles. Anything else that isn't a file or the API is a 404.
 APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|checks|activity|connections|settings)$")
@@ -124,6 +127,8 @@ class DetourHandler(BaseHTTPRequestHandler):
             path = path.rstrip("/")
         params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         try:
+            if not netguard.client_allowed(self.client_address[0], ALLOW_PUBLIC_CLIENTS):
+                return self.send(netguard.REFUSAL, "application/json; charset=utf-8", HTTPStatus.FORBIDDEN)
             if not self.valid_host():
                 return self.json({"error": "invalid host"}, HTTPStatus.BAD_REQUEST)
             if method in ("POST", "PUT"):
@@ -348,6 +353,8 @@ def main() -> None:
     init_db()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), DetourHandler)
     print(f"Detour portal running on http://127.0.0.1:{PORT} with data at {store.DB_PATH}", flush=True)
+    if ALLOW_PUBLIC_CLIENTS:
+        print(f"WARNING: {netguard.SETTING}=true. Anyone who can reach this port can read and change your data.", flush=True)
     server.serve_forever()
 
 

@@ -193,6 +193,7 @@ Set these variables before running `docker compose up`:
 |---|---|---|
 | `DETOUR_USER_NAME` | `Local user` | Display name shown in the portal. |
 | `DETOUR_ENABLE_NESTED_DETOURS` | `false` | Set to `true` to allow Sub-detours. |
+| `DETOUR_ALLOW_PUBLIC_CLIENTS` | `false` | Leave as `false`. Detour has no sign-in, so it answers `403` to any client on a public IP address. Setting `true` turns that off. |
 | `DETOUR_IMAGE` | `detour-ce:local` | Image to run. Set to a release image to skip building. |
 
 For example:
@@ -208,6 +209,13 @@ In PowerShell, set `$env:DETOUR_USER_NAME="Alex"` first, then run
 
 The ports are bound to `127.0.0.1` on purpose. Don't expose ports 3787 or 3788
 through a reverse proxy, tunnel, or port forward.
+
+As a second safeguard, Detour refuses any client that connects from a public IP
+address (`403`), even if someone publishes the port with
+`docker run -p 3787:3787` or edits the Compose file. Loopback, private and
+Tailscale addresses are allowed. A reverse proxy or tunnel on the same host looks
+like a private address, so this does not make those safe. Always run Detour with
+the Compose file as shipped, and don't set `DETOUR_ALLOW_PUBLIC_CLIENTS=true`.
 
 ## Data, backup, and upgrades
 

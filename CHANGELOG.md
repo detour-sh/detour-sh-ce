@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 
+### Security
+
+- Detour now answers `403` to clients on public IP addresses, on both the portal
+  and MCP ports, so it stays private even if the container is started with
+  ports published to the internet (for example `docker run -p 3787:3787`). Set
+  `DETOUR_ALLOW_PUBLIC_CLIENTS=true` to turn this off. Not recommended.
+
 ### Changed
 
 - New portal built on IBM's Carbon Design System (React), in light and dark

@@ -8,6 +8,8 @@ services:
       DETOUR_MCP_AUTH_MODE: "${DETOUR_MCP_AUTH_MODE:-key}"
       DETOUR_MCP_ALLOW_STDIO: "${DETOUR_MCP_ALLOW_STDIO:-false}"
       DETOUR_USER_NAME: "${DETOUR_USER_NAME:-Local user}"
+      # Keep false. Detour has no sign-in, so it refuses clients on public IP addresses.
+      DETOUR_ALLOW_PUBLIC_CLIENTS: "${DETOUR_ALLOW_PUBLIC_CLIENTS:-false}"
     ports:
       - "127.0.0.1:3787:3787"
       - "127.0.0.1:3788:3788"

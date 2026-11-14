@@ -16,6 +16,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.types import ToolAnnotations
 
+import netguard
 import store
 
 PORT = int(os.environ.get("DETOUR_MCP_PORT", "3788"))
@@ -227,5 +228,5 @@ if __name__ == "__main__":
     else:
         import uvicorn
 
-        app = mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0")
+        app = netguard.ClientGuard(mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0"))
         uvicorn.run(app, host="0.0.0.0", port=PORT, log_level=mcp.settings.log_level.lower(), server_header=False)
