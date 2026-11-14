@@ -4,6 +4,11 @@ $ErrorActionPreference = "Stop"
 # with its own volume, so your real Detour data is never touched.
 $project = "detour-check"
 
+# The portal needs a sign-in token. This one is made for this run only and is never saved.
+$bytes = New-Object byte[] 24
+[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$env:DETOUR_PORTAL_TOKEN = [Convert]::ToHexString($bytes).ToLower()
+
 Write-Host "1/4 Unit checks"
 python -B -m unittest discover -s app -p "test_*.py"
 if ($LASTEXITCODE -ne 0) { throw "Unit checks failed" }

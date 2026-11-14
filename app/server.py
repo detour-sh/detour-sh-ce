@@ -3,6 +3,9 @@
 The portal is the user's side of Detour. Everything it can do, it does through
 the same functions in store.py that the MCP server uses, so the UI and agents
 never drift apart.
+
+Only the built UI files, /health and the sign-in calls are public. Every other API call
+needs the session cookie that /api/signin sets. See security.py and docs/security.md.
 """
 from __future__ import annotations
 
@@ -15,12 +18,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import security
 import store
 
 VERSION = "0.2.0"
 APP_NAME = "detour"
-PORT = int(os.environ.get("PORT", "3787"))
-MCP_PORT = int(os.environ.get("DETOUR_MCP_PORT", "3788"))
 USER_NAME = os.environ.get("DETOUR_USER_NAME", "Local user").strip() or "Local user"
 WEB_DIR = Path(os.environ.get("DETOUR_WEB_DIR", str(Path(__file__).with_name("web") / "dist")))
 BRAND_DIR = Path(__file__).with_name("brand")
@@ -30,7 +32,15 @@ BRAND_FILES = {
     "/assets/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
 MAX_BODY_BYTES = 2_000_000
-ALLOWED_HOSTS = {"127.0.0.1", "localhost", "detour"}
+
+# Replaced by configure() when the server starts. Until then nothing private is served.
+SETTINGS = security.Settings.from_env({})
+SIGN_IN: security.SignIn | None = None
+
+
+def configure(settings: security.Settings, sign_in: security.SignIn | None) -> None:
+    global SETTINGS, SIGN_IN
+    SETTINGS, SIGN_IN = settings, sign_in
 
 # Paths the single-page app handles. Anything else that isn't a file or the API is a 404.
 APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|checks|activity|connections|settings)$")
@@ -45,7 +55,9 @@ SECURITY_HEADERS = {
     "x-frame-options": "DENY",
     "cross-origin-opener-policy": "same-origin",
     "cross-origin-resource-policy": "same-origin",
+    "permissions-policy": "camera=(), microphone=(), geolocation=()",
 }
+HSTS = "max-age=31536000"
 
 init_db = store.init_db
 
@@ -82,14 +94,19 @@ def reset_web_files() -> None:
     _web_files = None
 
 
-def session_info() -> dict:
+def session_info(signed_in: bool) -> dict:
+    """What the UI needs on load. A visitor who hasn't signed in learns only that they must."""
+    if not signed_in:
+        return {"signed_in": False, "cloud": SETTINGS.cloud}
     counts = store.proposal_counts()
     return {
+        "signed_in": True,
+        "cloud": SETTINGS.cloud,
         "user_name": USER_NAME,
         "version": VERSION,
         "nested_enabled": store.NESTED_DETOURS_ENABLED,
-        "mcp_endpoint": f"http://127.0.0.1:{MCP_PORT}/mcp",
-        "mcp_auth": os.environ.get("DETOUR_MCP_AUTH_MODE", "key").strip().lower(),
+        "mcp_endpoint": SETTINGS.mcp_url,
+        "mcp_auth": SETTINGS.mcp_auth,
         "pending_count": counts["pending"],
         "data_path": str(store.DB_PATH),
     }
@@ -124,7 +141,8 @@ class DetourHandler(BaseHTTPRequestHandler):
             path = path.rstrip("/")
         params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         try:
-            if not self.valid_host():
+            # Platform health probes often send the container's own address as the host.
+            if path != "/health" and not self.valid_host():
                 return self.json({"error": "invalid host"}, HTTPStatus.BAD_REQUEST)
             if method in ("POST", "PUT"):
                 if not self.valid_write_origin():
@@ -136,7 +154,7 @@ class DetourHandler(BaseHTTPRequestHandler):
             if method != "GET":
                 return self.json({"error": "method not allowed"}, HTTPStatus.METHOD_NOT_ALLOWED)
             if path == "/health":
-                return self.json({"ok": True, "service": APP_NAME, "version": VERSION})
+                return self.json({"ok": True, "service": APP_NAME})
             if path in BRAND_FILES:
                 name, content_type = BRAND_FILES[path]
                 return self.file(BRAND_DIR / name, content_type, "public, max-age=86400")
@@ -168,11 +186,19 @@ class DetourHandler(BaseHTTPRequestHandler):
     def api(self, method: str, path: str, params: dict) -> None:
         parts = path.removeprefix("/api/").split("/")
         head, rest = parts[0], parts[1:]
+
+        # The only calls that work without a session.
+        if head == "session" and not rest and method == "GET":
+            return self.json(session_info(self.authenticated()))
+        if head == "signin" and not rest and method == "POST":
+            return self.sign_in(self.body_json())
+        if head == "signout" and not rest and method == "POST":
+            return self.sign_out()
+        if not self.authenticated():
+            return self.json({"error": "sign in required"}, HTTPStatus.UNAUTHORIZED)
+
         body = self.body_json() if method in ("POST", "PUT") else {}
         created = HTTPStatus.CREATED
-
-        if head == "session" and not rest and method == "GET":
-            return self.json(session_info())
 
         if head == "routes":
             if not rest:
@@ -277,17 +303,36 @@ class DetourHandler(BaseHTTPRequestHandler):
 
         return self.json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
+    # ------------------------------------------------------------ sign-in
+
+    def authenticated(self) -> bool:
+        return SIGN_IN is not None and SIGN_IN.valid(SIGN_IN.read_cookie(self.headers.get("cookie")))
+
+    def sign_in(self, body: dict) -> None:
+        if SIGN_IN is None:
+            return self.json({"error": "sign-in is not set up"}, HTTPStatus.UNAUTHORIZED)
+        wait = SIGN_IN.retry_after()
+        if wait:
+            return self.json({"error": f"too many attempts. Try again in {wait} seconds"}, HTTPStatus.TOO_MANY_REQUESTS,
+                             headers={"retry-after": str(wait)})
+        if not SIGN_IN.check_token(body.get("token")):
+            SIGN_IN.record_failure()
+            return self.json({"error": "that token isn't right"}, HTTPStatus.UNAUTHORIZED)
+        self.json({"ok": True}, headers={"set-cookie": SIGN_IN.set_cookie(SIGN_IN.issue())})
+
+    def sign_out(self) -> None:
+        if SIGN_IN is None:
+            return self.json({"ok": True})
+        SIGN_IN.revoke(SIGN_IN.read_cookie(self.headers.get("cookie")))
+        self.json({"ok": True}, headers={"set-cookie": SIGN_IN.clear_cookie()})
+
     # ------------------------------------------------------------ request checks
 
     def valid_host(self) -> bool:
-        host = self.headers.get("host", "")
+        host = self.headers.get("host", "").lower()
         if not host or "@" in host or "," in host:
             return False
-        try:
-            parsed = urlparse(f"//{host}")
-            return parsed.hostname in ALLOWED_HOSTS and parsed.port == self.server.server_port
-        except ValueError:
-            return False
+        return host in SETTINGS.local_hosts(self.server.server_port) or host == SETTINGS.public_host
 
     def valid_write_origin(self) -> bool:
         if self.headers.get("sec-fetch-site", "").lower() == "cross-site":
@@ -295,7 +340,10 @@ class DetourHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("origin")
         if not origin:
             return True
-        return origin == f"http://{self.headers['host']}"
+        allowed = {f"http://{host}" for host in SETTINGS.local_hosts(self.server.server_port)}
+        if SETTINGS.public_url:
+            allowed.add(SETTINGS.public_url)
+        return origin.lower() in allowed
 
     def body_json(self) -> dict:
         try:
@@ -324,6 +372,8 @@ class DetourHandler(BaseHTTPRequestHandler):
         self.send_header("cache-control", cache)
         for name, value in SECURITY_HEADERS.items():
             self.send_header(name, value)
+        if SETTINGS.cloud:
+            self.send_header("strict-transport-security", HSTS)
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
@@ -345,9 +395,18 @@ class RequestTooLarge(Exception):
 
 
 def main() -> None:
+    try:
+        settings = security.Settings.from_env()
+        token = security.load_portal_token(settings, os.environ, store.DATA_DIR)
+    except security.ConfigError as exc:
+        raise SystemExit(f"Detour can't start: {exc}") from exc
+    configure(settings, security.SignIn(token, settings))
     init_db()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), DetourHandler)
-    print(f"Detour portal running on http://127.0.0.1:{PORT} with data at {store.DB_PATH}", flush=True)
+    server = ThreadingHTTPServer((settings.bind_host, settings.portal_port), DetourHandler)
+    where = settings.public_url or f"http://127.0.0.1:{settings.portal_port}"
+    print(f"Detour portal running on {where} with data at {store.DB_PATH}", flush=True)
+    if not os.environ.get("DETOUR_PORTAL_TOKEN", "").strip():
+        print("Sign in with the token in /data/portal-token. Show it with: docker compose exec detour cat /data/portal-token", flush=True)
     server.serve_forever()
 
 

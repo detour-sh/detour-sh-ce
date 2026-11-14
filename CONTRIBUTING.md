@@ -32,6 +32,10 @@ cd ..
 DETOUR_DATA_DIR=./.data python server.py
 ```
 
+The portal asks you to sign in. On first start it makes a token and saves it to
+`.data/portal-token`. To skip that, set `DETOUR_PORTAL_TOKEN` to any string of 24 or
+more characters. Outside Docker it listens on `127.0.0.1` only.
+
 `app/web/.npmrc` turns off install scripts, because Carbon's packages run an
 IBM telemetry script on install. Keep it that way.
 
@@ -55,6 +59,9 @@ The portal follows Carbon so that it stays consistent and can be upgraded:
   hard-code colors, sizes or fonts.
 - The portal and the MCP server both go through `app/store.py`. Add behavior
   there, not in the UI or in a single tool.
+- Security settings live in `app/security.py`. A wrong setting must stop startup, never fall
+  back to something weaker. Read [docs/security.md](docs/security.md) before changing sign-in,
+  hosts, origins or MCP access, and add a test first.
 
 Run the tests from the repository root:
 
@@ -75,9 +82,11 @@ Compose project, `detour-check`, with its own volume, and deletes that volume
 at the end. Your own Detour data isn't touched. Stop your own Detour first,
 because both use ports 3787 and 3788.
 
-On other platforms, run the same steps by hand:
+On other platforms, run the same steps by hand. The browser tests sign in with
+`DETOUR_PORTAL_TOKEN`, so set it first. The script does this for you.
 
 ```bash
+export DETOUR_PORTAL_TOKEN="$(openssl rand -hex 24)"
 docker compose -p detour-check up -d --build --wait detour
 docker compose -p detour-check --profile test run --rm --build --no-deps ui-test
 docker compose -p detour-check --profile test down -v

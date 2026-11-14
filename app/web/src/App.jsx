@@ -13,9 +13,10 @@ import {
   SkipToContent,
   Tag,
 } from "@carbon/react";
-import { Activity, CheckmarkOutline, Connect, Flow, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
-import { api } from "./api.js";
+import { Activity, CheckmarkOutline, Connect, Flow, Logout, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
+import { SIGNED_OUT, api } from "./api.js";
 import { useRouter } from "./router.jsx";
+import { ErrorNote, Loading } from "./components/common.jsx";
 import Review from "./pages/Review.jsx";
 import RoutesPage from "./pages/Routes.jsx";
 import RouteDetail from "./pages/RouteDetail.jsx";
@@ -23,6 +24,7 @@ import ActivityPage from "./pages/Activity.jsx";
 import ChecksPage from "./pages/Checks.jsx";
 import Connections from "./pages/Connections.jsx";
 import SettingsPage from "./pages/Settings.jsx";
+import SignIn from "./pages/SignIn.jsx";
 import NotFound from "./pages/NotFound.jsx";
 
 const SessionContext = createContext({ session: null, refreshSession: () => {} });
@@ -63,11 +65,32 @@ function page(path) {
 
 export default function App() {
   const [session, setSession] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const refreshSession = useCallback(() => {
-    api.session().then(setSession).catch(() => {});
+    api
+      .session()
+      .then((next) => {
+        setLoadError(null);
+        setSession(next);
+      })
+      .catch(setLoadError);
   }, []);
   useEffect(refreshSession, [refreshSession]);
+  // Any call that comes back 401 means the session ended: go back to the sign-in page.
+  useEffect(() => {
+    const onSignedOut = () => setSession((current) => ({ signed_in: false, cloud: Boolean(current?.cloud) }));
+    window.addEventListener(SIGNED_OUT, onSignedOut);
+    return () => window.removeEventListener(SIGNED_OUT, onSignedOut);
+  }, []);
 
+  if (!session) {
+    return (
+      <main id="main-content" className="dt-signin" tabIndex={-1}>
+        {loadError ? <ErrorNote error={loadError} title="Can't reach Detour" /> : <Loading label="Loading" />}
+      </main>
+    );
+  }
+  if (!session.signed_in) return <SignIn cloud={session.cloud} onSignedIn={refreshSession} />;
   return (
     <SessionContext.Provider value={{ session, refreshSession }}>
       <HeaderContainer render={Shell} />
@@ -117,8 +140,13 @@ function Shell({ isSideNavExpanded, onClickSideNavExpand }) {
           Detour
         </HeaderName>
         <HeaderGlobalBar>
-          <Tag type="cool-gray" size="sm" className="dt-header-tag" title="Detour only listens on this computer">
-            Local only
+          <Tag
+            type="cool-gray"
+            size="sm"
+            className="dt-header-tag"
+            title={session?.cloud ? "This Detour is hosted. Sign-in and HTTPS are required." : "Detour only listens on this computer"}
+          >
+            {session?.cloud ? "Hosted" : "Local only"}
           </Tag>
           <HeaderGlobalAction
             aria-label={session ? `${session.user_name}: settings` : "Settings"}
@@ -126,6 +154,9 @@ function Shell({ isSideNavExpanded, onClickSideNavExpand }) {
             onClick={() => navigate("/settings")}
           >
             <UserAvatar size={20} />
+          </HeaderGlobalAction>
+          <HeaderGlobalAction aria-label="Sign out" tooltipAlignment="end" onClick={() => api.signOut().finally(() => window.dispatchEvent(new Event(SIGNED_OUT)))}>
+            <Logout size={20} />
           </HeaderGlobalAction>
         </HeaderGlobalBar>
         <SideNav aria-label="Primary" expanded={isSideNavExpanded} onSideNavBlur={onClickSideNavExpand} href="#main-content">

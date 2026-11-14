@@ -3,6 +3,10 @@
 Agents read context and propose changes. They never write directly: each
 proposal waits in the portal's Review queue unless the route's policy lets it
 apply on its own.
+
+Every HTTP call needs an access key. The Host and Origin headers are checked too, so a web page
+can't reach the endpoint through a rebound host name. A bad setting stops startup instead of
+turning authentication off. See security.py and docs/security.md.
 """
 from __future__ import annotations
 
@@ -14,13 +18,19 @@ from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
+import security
 import store
 
-PORT = int(os.environ.get("DETOUR_MCP_PORT", "3788"))
-MCP_RESOURCE = f"http://127.0.0.1:{PORT}/mcp"
-AUTH_MODE = os.environ.get("DETOUR_MCP_AUTH_MODE", "key").strip().lower()
+try:
+    SETTINGS = security.Settings.from_env()
+except security.ConfigError as exc:
+    raise SystemExit(f"Detour MCP can't start: {exc}") from exc
+PORT = SETTINGS.mcp_port
+MCP_RESOURCE = SETTINGS.mcp_url
+AUTH_MODE = SETTINGS.mcp_auth
 ALLOW_STDIO = os.environ.get("DETOUR_MCP_ALLOW_STDIO", "false").lower() == "true"
 LOCAL_AGENT = {"id": None, "name": "Local agent", "can_propose": True}
 # Set only by the --stdio entry point, after the user opted in with DETOUR_MCP_ALLOW_STDIO.
@@ -67,7 +77,7 @@ options = {}
 if AUTH_MODE == "key":
     options = {
         "token_verifier": LocalAccessKeyVerifier(),
-        "auth": AuthSettings(issuer_url="http://127.0.0.1:3787", resource_server_url=MCP_RESOURCE,
+        "auth": AuthSettings(issuer_url=SETTINGS.public_url or f"http://127.0.0.1:{SETTINGS.portal_port}", resource_server_url=MCP_RESOURCE,
                              required_scopes=["detour:read"], validate_token_resource=True),
     }
 
@@ -217,6 +227,17 @@ def list_my_proposals(status: str = "all") -> list[dict]:
     return [{k: r[k] for k in ("id", "status", "action", "route", "proposed", "decision_note", "created_at")} for r in results]
 
 
+def transport_security(settings: security.Settings) -> TransportSecuritySettings:
+    """Only the addresses this install is meant to be reached on. The library turns this off for non-loopback binds."""
+    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=sorted(settings.mcp_hosts),
+                                     allowed_origins=sorted(settings.mcp_origins))
+
+
+def build_app():
+    return mcp.streamable_http_app(stateless_http=True, json_response=True, host=SETTINGS.bind_host,
+                                   transport_security=transport_security(SETTINGS))
+
+
 if __name__ == "__main__":
     store.init_db()
     if sys.argv[1:] == ["--stdio"]:
@@ -227,5 +248,6 @@ if __name__ == "__main__":
     else:
         import uvicorn
 
-        app = mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0")
-        uvicorn.run(app, host="0.0.0.0", port=PORT, log_level=mcp.settings.log_level.lower(), server_header=False)
+        if AUTH_MODE != "key":
+            print("WARNING: DETOUR_MCP_AUTH_MODE=none. Any program on this computer can read and propose changes without a key.", flush=True)
+        uvicorn.run(build_app(), host=SETTINGS.bind_host, port=PORT, log_level=mcp.settings.log_level.lower(), server_header=False)

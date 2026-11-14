@@ -5,6 +5,22 @@
 Security fixes are made on the `main` branch and included in the next release.
 Please run the latest version.
 
+## Scope
+
+Detour is local first: one user, one install. How it is secured, and what is
+your responsibility, is in [docs/security.md](docs/security.md). Hosting guidance is in
+[docs/cloud-hosting.md](docs/cloud-hosting.md). Use of Detour is subject to the
+[disclaimer](DISCLAIMER.md).
+
+In scope: bypassing portal sign-in or MCP key checks, getting around the Host or Origin
+checks, leaking the sign-in token or access keys, reading or writing data without
+being signed in, and weaknesses in the container image or the release pipeline.
+
+Out of scope: problems that need a host or network you left open (publishing ports 3787
+or 3788 to the internet, a proxy that drops the `Host` header), a stolen token or key,
+malware on the machine that runs Detour, and settings the documentation tells you not
+to use, such as `DETOUR_MCP_AUTH_MODE=none` on a shared machine.
+
 ## Reporting a vulnerability
 
 Please do not report security vulnerabilities through public issues,

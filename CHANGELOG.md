@@ -6,6 +6,51 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Detour stays local first. This release makes sure nothing is open by default, and adds a
+documented way to host it if you secure it.
+
+### Security
+
+- **The portal now requires sign-in.** Before, anything that could reach port 3787 could
+  make access keys, export your data and import data. Detour makes a sign-in token on first
+  start and saves it in the data volume as `/data/portal-token`. Set `DETOUR_PORTAL_TOKEN`
+  to choose your own. Sessions use signed `HttpOnly`, `SameSite=Strict` cookies. Five wrong
+  tokens in a minute lock sign-in for a minute.
+- **An unknown `DETOUR_MCP_AUTH_MODE` no longer turns authentication off.** Only `key` and
+  `none` are accepted, and anything else stops startup.
+- **The MCP endpoint now checks Host and Origin headers**, as the MCP specification
+  requires. Before, the check was off because the server listened on all interfaces.
+- `/health` no longer reports the version, and responses add a Permissions-Policy header.
+- Outside Docker, the portal and MCP server listen on `127.0.0.1` by default. The container
+  sets `DETOUR_BIND_HOST=0.0.0.0` so Docker can forward to it, and Compose publishes the
+  ports on `127.0.0.1` only.
+
+### Added
+
+- **Hosted mode.** Set `DETOUR_PUBLIC_URL` to an `https://` address to host Detour. It
+  then accepts that host name only, uses `Secure` `__Host-` cookies and HSTS, requires a
+  `DETOUR_PORTAL_TOKEN` you set, and refuses `DETOUR_MCP_AUTH_MODE=none`.
+- `DETOUR_SESSION_HOURS` sets how long a sign-in lasts (default 24).
+- A sign-in page, a Sign out button, and a Security section in Settings.
+- [docs/security.md](docs/security.md): intended use, protection layers, limits and
+  incident steps.
+- [docs/cloud-hosting.md](docs/cloud-hosting.md): safer ways to host on AWS, DigitalOcean,
+  Fly.io, Cloudflare, Tailscale and other container hosts, with a checklist.
+- [DISCLAIMER.md](DISCLAIMER.md): no warranty, limit of liability and indemnity. The
+  sign-in page links to it.
+
+### Changed
+
+- The header tag reads "Hosted" instead of "Local only" when `DETOUR_PUBLIC_URL` is set.
+- The browser tests sign in first. Set `DETOUR_PORTAL_TOKEN` when you run them by hand.
+
+### Upgrading
+
+After you upgrade, the portal asks you to sign in. Run
+`docker compose exec detour cat /data/portal-token` to show the token. Your access keys keep
+working. Back up the volume first, as the README describes. A backup now contains the
+token as well.
+
 ## [0.2.0] - 2026-11-14
 
 Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.

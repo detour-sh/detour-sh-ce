@@ -5,6 +5,10 @@ services:
     environment:
       DETOUR_ENABLE_NESTED_DETOURS: "${DETOUR_ENABLE_NESTED_DETOURS:-false}"
       DETOUR_MCP_PORT: "3788"
+      # Local use needs none of these three. Cloud use is described in docs/cloud-hosting.md.
+      DETOUR_PORTAL_TOKEN: "${DETOUR_PORTAL_TOKEN:-}"
+      DETOUR_PUBLIC_URL: "${DETOUR_PUBLIC_URL:-}"
+      DETOUR_SESSION_HOURS: "${DETOUR_SESSION_HOURS:-24}"
       DETOUR_MCP_AUTH_MODE: "${DETOUR_MCP_AUTH_MODE:-key}"
       DETOUR_MCP_ALLOW_STDIO: "${DETOUR_MCP_ALLOW_STDIO:-false}"
       DETOUR_USER_NAME: "${DETOUR_USER_NAME:-Local user}"
@@ -36,6 +40,7 @@ services:
     environment:
       DETOUR_BASE_URL: "http://localhost:3787"
       DETOUR_MCP_URL: "http://localhost:3788/mcp"
+      DETOUR_PORTAL_TOKEN: "${DETOUR_PORTAL_TOKEN:-}"
     depends_on:
       detour:
         condition: service_healthy

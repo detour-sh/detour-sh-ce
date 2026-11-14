@@ -1,5 +1,7 @@
 // Thin client for the portal API in app/server.py.
 
+export const SIGNED_OUT = "detour:signed-out";
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -20,6 +22,10 @@ async function request(method, path, body) {
   } catch {
     // Non-JSON error page; fall through with an empty body.
   }
+  if (response.status === 401 && path !== "/api/signin") {
+    // The session ended, or the portal restarted with a new token. The app shows the sign-in page.
+    window.dispatchEvent(new Event(SIGNED_OUT));
+  }
   if (!response.ok) {
     throw new ApiError(data.error || `Request failed (${response.status})`, response.status);
   }
@@ -28,6 +34,8 @@ async function request(method, path, body) {
 
 export const api = {
   session: () => request("GET", "/api/session"),
+  signIn: (token) => request("POST", "/api/signin", { token }),
+  signOut: () => request("POST", "/api/signout", {}),
 
   routes: () => request("GET", "/api/routes"),
   route: (id) => request("GET", `/api/routes/${encodeURIComponent(id)}`),

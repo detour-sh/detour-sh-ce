@@ -8,11 +8,16 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import security
 import server
 import store
 
+TOKEN = "portal-test-token-0123456789abcdef"
 
-class PortalApiTests(unittest.TestCase):
+
+class PortalCase(unittest.TestCase):
+    """A running portal on a free port, and a signed-in session cookie. Holds no tests itself."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
@@ -26,8 +31,13 @@ class PortalApiTests(unittest.TestCase):
         server.WEB_DIR = web
         server.reset_web_files()
         store.init_db()
+        self.settings = self.make_settings()
+        self.sign_in = security.SignIn(TOKEN, self.settings)
+        self.previous_auth = server.SETTINGS, server.SIGN_IN
+        server.configure(self.settings, self.sign_in)
+        self.session_cookie = self.sign_in.issue()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.DetourHandler)
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.httpd.server_port}"
 
@@ -36,12 +46,18 @@ class PortalApiTests(unittest.TestCase):
         self.httpd.server_close()
         self.thread.join()
         store.DATA_DIR, store.DB_PATH, server.WEB_DIR = self.previous
+        server.SETTINGS, server.SIGN_IN = self.previous_auth
         server.reset_web_files()
         self.tmp.cleanup()
 
-    def request(self, path, method="GET", payload=None, headers=None, raw=None):
+    def make_settings(self):
+        return security.Settings.from_env({})
+
+    def request(self, path, method="GET", payload=None, headers=None, raw=None, anonymous=False):
         body = raw if raw is not None else (json.dumps(payload).encode() if payload is not None else None)
         request_headers = {"Content-Type": "application/json"} if body is not None else {}
+        if not anonymous:
+            request_headers["Cookie"] = f"{self.sign_in.cookie_name}={self.session_cookie}"
         request_headers.update(headers or {})
         request = Request(self.base + path, data=body, headers=request_headers, method=method)
         try:
@@ -53,6 +69,8 @@ class PortalApiTests(unittest.TestCase):
             data = json.loads(text) if response.headers.get("content-type", "").startswith("application/json") else text
             return response.status, data, response.headers
 
+
+class PortalApiTests(PortalCase):
     def test_full_review_flow_over_http(self):
         status, data, _ = self.request("/api/routes", "POST", {"name": "app", "targets": [{"kind": "folder", "value": "~/code/app"}]})
         self.assertEqual(status, 201)
@@ -216,10 +234,152 @@ class PortalApiTests(unittest.TestCase):
         conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_port, timeout=5)
         conn.putrequest("POST", "/api/routes")
         conn.putheader("Content-Type", "application/json")
+        conn.putheader("Cookie", f"{self.sign_in.cookie_name}={self.session_cookie}")
         conn.putheader("Content-Length", str(server.MAX_BODY_BYTES + 1))
         conn.endheaders()
         self.assertEqual(conn.getresponse().status, 413)
         conn.close()
+
+
+class PortalSignInTests(PortalCase):
+    """Nobody reaches the user's data without signing in, even from this computer."""
+
+    def test_every_api_call_needs_a_session(self):
+        for method, path in (("GET", "/api/routes"), ("GET", "/api/keys"), ("GET", "/api/export.json"), ("GET", "/api/events"),
+                             ("GET", "/api/proposals"), ("GET", "/api/checks"), ("POST", "/api/routes"), ("POST", "/api/keys"),
+                             ("POST", "/api/import"), ("PUT", "/api/routes/x")):
+            status, data, _ = self.request(path, method, {} if method != "GET" else None, anonymous=True)
+            self.assertEqual((status, data["error"]), (401, "sign in required"), f"{method} {path}")
+        self.assertEqual(store.list_keys(), [])
+
+    def test_an_unknown_api_path_still_needs_a_session(self):
+        self.assertEqual(self.request("/api/nope", anonymous=True)[0], 401)
+        self.assertEqual(self.request("/api/nope")[0], 404)
+
+    def test_a_forged_or_expired_cookie_is_refused(self):
+        for cookie in ("detour_session=garbage", f"detour_session={self.session_cookie}x", "detour_session="):
+            status, _, _ = self.request("/api/routes", anonymous=True, headers={"Cookie": cookie})
+            self.assertEqual(status, 401, cookie)
+
+    def test_the_session_endpoint_tells_an_anonymous_visitor_only_that_they_must_sign_in(self):
+        status, data, _ = self.request("/api/session", anonymous=True)
+        self.assertEqual((status, data), (200, {"signed_in": False, "cloud": False}))
+        status, data, _ = self.request("/api/session")
+        self.assertTrue(data["signed_in"])
+        self.assertEqual(data["user_name"], server.USER_NAME)
+        self.assertFalse(data["cloud"])
+        self.assertEqual(data["mcp_auth"], "key")
+
+    def test_the_app_shell_and_health_are_public_so_the_sign_in_page_can_load(self):
+        self.assertEqual(self.request("/", anonymous=True)[0], 200)
+        self.assertEqual(self.request("/assets/index-abc.js", anonymous=True)[0], 200)
+        status, data, _ = self.request("/health", anonymous=True)
+        self.assertEqual((status, data), (200, {"ok": True, "service": "detour"}))
+
+    def test_sign_in_with_the_right_token_sets_a_session_cookie(self):
+        status, data, headers = self.request("/api/signin", "POST", {"token": TOKEN}, anonymous=True)
+        self.assertEqual((status, data), (200, {"ok": True}))
+        cookie = headers["set-cookie"]
+        self.assertTrue(cookie.startswith("detour_session="))
+        for part in ("HttpOnly", "SameSite=Strict", "Path=/"):
+            self.assertIn(part, cookie)
+        value = cookie.split(";", 1)[0]
+        status, data, _ = self.request("/api/routes", anonymous=True, headers={"Cookie": value})
+        self.assertEqual(status, 200)
+
+    def test_sign_in_with_a_wrong_token_is_refused_and_leaves_no_cookie(self):
+        for payload in ({"token": "wrong"}, {"token": ""}, {}, {"token": 5}):
+            status, data, headers = self.request("/api/signin", "POST", payload, anonymous=True)
+            self.assertEqual((status, data["error"]), (401, "that token isn't right"), payload)
+            self.assertIsNone(headers.get("set-cookie"))
+
+    def test_too_many_wrong_tokens_lock_sign_in_even_for_the_right_one(self):
+        for _ in range(security.MAX_FAILURES):
+            self.request("/api/signin", "POST", {"token": "wrong"}, anonymous=True)
+        status, data, headers = self.request("/api/signin", "POST", {"token": TOKEN}, anonymous=True)
+        self.assertEqual(status, 429)
+        self.assertGreater(int(headers["retry-after"]), 0)
+        self.assertIsNone(headers.get("set-cookie"))
+
+    def test_sign_in_is_not_a_cross_site_form_target(self):
+        status, _, _ = self.request("/api/signin", "POST", {"token": TOKEN}, anonymous=True, headers={"Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("/api/signin", "POST", raw=f"token={TOKEN}".encode(), anonymous=True,
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 415)
+
+    def test_sign_out_clears_the_cookie_and_ends_that_session(self):
+        status, _, headers = self.request("/api/signout", "POST", {})
+        self.assertEqual(status, 200)
+        self.assertIn("Max-Age=0", headers["set-cookie"])
+        self.assertEqual(self.request("/api/routes")[0], 401)
+
+    def test_sign_out_without_a_session_is_harmless(self):
+        self.assertEqual(self.request("/api/signout", "POST", {}, anonymous=True)[0], 200)
+
+    def test_responses_are_never_cached(self):
+        _, _, headers = self.request("/api/routes")
+        self.assertEqual(headers["cache-control"], "no-store")
+        _, _, headers = self.request("/api/routes", anonymous=True)
+        self.assertEqual(headers["cache-control"], "no-store")
+
+    def test_local_mode_sends_no_hsts_header(self):
+        _, _, headers = self.request("/api/session", anonymous=True)
+        self.assertIsNone(headers.get("strict-transport-security"))
+
+    def test_an_unconfigured_server_refuses_everything_private(self):
+        server.configure(self.settings, None)
+        self.assertEqual(self.request("/api/routes")[0], 401)
+        self.assertEqual(self.request("/api/signin", "POST", {"token": TOKEN}, anonymous=True)[0], 401)
+
+
+class CloudPortalTests(PortalCase):
+    """With DETOUR_PUBLIC_URL set, only that name works, and cookies are Secure."""
+
+    PUBLIC = "detour.example.com"
+
+    def make_settings(self):
+        return security.Settings.from_env({"DETOUR_PUBLIC_URL": f"https://{self.PUBLIC}"})
+
+    def public(self, path, method="GET", payload=None, **kwargs):
+        headers = {"Host": self.PUBLIC, "Origin": f"https://{self.PUBLIC}", **kwargs.pop("headers", {})}
+        return self.request(path, method, payload, headers=headers, **kwargs)
+
+    def test_the_public_name_is_accepted_and_others_are_not(self):
+        self.assertEqual(self.public("/api/routes")[0], 200)
+        self.assertEqual(self.request("/api/routes", headers={"Host": "attacker.example"})[0], 400)
+        self.assertEqual(self.request("/api/routes", headers={"Host": f"{self.PUBLIC}:9999"})[0], 400)
+
+    def test_sign_in_sets_a_host_only_secure_cookie(self):
+        status, _, headers = self.public("/api/signin", "POST", {"token": TOKEN}, anonymous=True)
+        self.assertEqual(status, 200)
+        cookie = headers["set-cookie"]
+        self.assertTrue(cookie.startswith("__Host-detour_session="))
+        for part in ("Secure", "HttpOnly", "SameSite=Strict", "Path=/"):
+            self.assertIn(part, cookie)
+        self.assertNotIn("Domain", cookie)
+
+    def test_writes_must_come_from_the_https_origin(self):
+        self.assertEqual(self.public("/api/routes", "POST", {"name": "x"})[0], 201)
+        for origin in ("http://detour.example.com", "https://evil.example", f"http://127.0.0.1:{self.httpd.server_port}.evil.example"):
+            status, _, _ = self.public("/api/routes", "POST", {"name": "y"}, headers={"Origin": origin})
+            self.assertEqual(status, 403, origin)
+
+    def test_responses_ask_browsers_to_stay_on_https(self):
+        _, _, headers = self.public("/api/session", anonymous=True)
+        self.assertIn("max-age=", headers["strict-transport-security"])
+        self.assertTrue(self.public("/api/session", anonymous=True)[1]["cloud"])
+
+    def test_the_session_reports_the_public_mcp_address(self):
+        self.assertEqual(self.public("/api/session")[1]["mcp_endpoint"], f"https://{self.PUBLIC}/mcp")
+
+    def test_health_works_on_any_host_so_platform_probes_pass(self):
+        status, data, _ = self.request("/health", anonymous=True, headers={"Host": "10.0.3.7:3787"})
+        self.assertEqual((status, data["ok"]), (200, True))
+
+    def test_the_session_endpoint_does_not_reveal_the_install_to_strangers(self):
+        _, data, _ = self.public("/api/session", anonymous=True)
+        self.assertEqual(data, {"signed_in": False, "cloud": True})
 
 
 class PackagingTests(unittest.TestCase):
@@ -232,6 +392,27 @@ class PackagingTests(unittest.TestCase):
         dockerfile = (self.root / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn('CMD ["python", "/app/run.py"]', dockerfile)
         self.assertIn("npm ci --ignore-scripts", dockerfile)
+
+    def test_the_image_contains_every_module_the_app_imports(self):
+        dockerfile = (self.root / "Dockerfile").read_text(encoding="utf-8")
+        copied = next(line for line in dockerfile.splitlines() if line.startswith("COPY store.py")).split()[1:-1]
+        modules = {path.name for path in self.root.glob("*.py") if not path.name.startswith("test_")}
+        self.assertEqual(modules, set(copied))
+
+    def test_the_container_binds_all_interfaces_and_compose_publishes_only_loopback(self):
+        # Inside a container the app must listen on all interfaces, or Docker can't forward to it.
+        # Outside one it defaults to 127.0.0.1. Compose is what keeps it off the network.
+        self.assertIn("ENV DETOUR_BIND_HOST=0.0.0.0", (self.root / "Dockerfile").read_text(encoding="utf-8"))
+        compose = (self.root.parent / "docker-compose.yml").read_text(encoding="utf-8")
+        ports = [line.strip() for line in compose.splitlines() if line.strip().startswith("- \"") and ":" in line and "37" in line]
+        self.assertEqual(len(ports), 2)
+        self.assertTrue(all(line.startswith('- "127.0.0.1:') for line in ports), ports)
+
+    def test_compose_passes_the_security_settings_through_with_safe_defaults(self):
+        compose = (self.root.parent / "docker-compose.yml").read_text(encoding="utf-8")
+        for needle in ('DETOUR_PORTAL_TOKEN: "${DETOUR_PORTAL_TOKEN:-}"', 'DETOUR_PUBLIC_URL: "${DETOUR_PUBLIC_URL:-}"',
+                       'DETOUR_MCP_AUTH_MODE: "${DETOUR_MCP_AUTH_MODE:-key}"', 'DETOUR_MCP_ALLOW_STDIO: "${DETOUR_MCP_ALLOW_STDIO:-false}"'):
+            self.assertIn(needle, compose)
 
     def test_web_dependencies_are_pinned_and_install_scripts_are_off(self):
         package = json.loads((self.root / "web" / "package.json").read_text(encoding="utf-8"))

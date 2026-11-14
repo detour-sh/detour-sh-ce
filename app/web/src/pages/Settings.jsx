@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { Button, InlineNotification } from "@carbon/react";
-import { Download, Upload } from "@carbon/icons-react";
+import { Download, Logout, Upload } from "@carbon/icons-react";
 import ThemePicker from "../components/ThemePicker.jsx";
-import { api } from "../api.js";
+import { SIGNED_OUT, api } from "../api.js";
 import { useSession, usePageTitle } from "../App.jsx";
 import { ErrorNote } from "../components/common.jsx";
 
@@ -33,7 +33,7 @@ export default function SettingsPage() {
       <div className="dt-page-header">
         <div>
           <h1>Settings</h1>
-          <p>{session ? `Signed in locally as ${session.user_name}.` : ""}</p>
+          <p>{session ? `Signed in as ${session.user_name}.` : ""}</p>
         </div>
       </div>
       <div className="dt-stack">
@@ -68,6 +68,38 @@ export default function SettingsPage() {
           ) : null}
           <ErrorNote error={error} title="Couldn't import" onClose={() => setError(null)} />
         </section>
+
+        {session ? (
+          <section className="dt-tile" aria-labelledby="security-heading">
+            <h2 id="security-heading">Security</h2>
+            <dl className="dt-dl">
+              <div>
+                <dt>Where it runs</dt>
+                <dd>{session.cloud ? `Hosted at ${session.mcp_endpoint.replace(/\/mcp$/, "")}, HTTPS only` : "This computer only"}</dd>
+              </div>
+              <div>
+                <dt>Portal sign-in</dt>
+                <dd>Required</dd>
+              </div>
+              <div>
+                <dt>MCP access keys</dt>
+                <dd>{session.mcp_auth === "key" ? "Required" : "Off (DETOUR_MCP_AUTH_MODE=none)"}</dd>
+              </div>
+            </dl>
+            <p className="dt-muted">
+              Detour is built to run on your own computer. Read{" "}
+              <a href="https://github.com/detour-sh/detour-sh-ce/blob/main/docs/security.md" target="_blank" rel="noopener noreferrer">
+                how it is secured
+              </a>{" "}
+              before you host it anywhere else.
+            </p>
+            <div className="dt-actions">
+              <Button kind="tertiary" renderIcon={Logout} onClick={() => api.signOut().finally(() => window.dispatchEvent(new Event(SIGNED_OUT)))}>
+                Sign out
+              </Button>
+            </div>
+          </section>
+        ) : null}
 
         {session ? (
           <section className="dt-tile" aria-labelledby="about-heading">

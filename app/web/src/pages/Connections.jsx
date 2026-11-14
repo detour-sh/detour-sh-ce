@@ -66,6 +66,7 @@ export default function Connections() {
   const [revoking, setRevoking] = useState(null);
   const [error, setError] = useState(null);
   const endpoint = session?.mcp_endpoint || "http://127.0.0.1:3788/mcp";
+  const hosted = Boolean(session?.cloud);
   const authOff = session && session.mcp_auth !== "key";
 
   async function run(fn) {
@@ -102,7 +103,11 @@ export default function Connections() {
           <CodeSnippet type="single" feedback="Copied">
             {endpoint}
           </CodeSnippet>
-          <p className="dt-muted">Only tools on this computer can connect. Cloud-hosted agents can't reach 127.0.0.1.</p>
+          <p className="dt-muted">
+            {hosted
+              ? "Every request needs an access key sent as a Bearer token. Keep keys out of shared files and chat."
+              : "Only tools on this computer can connect. Cloud-hosted agents can't reach 127.0.0.1."}
+          </p>
         </section>
 
         {authOff ? (
@@ -111,7 +116,7 @@ export default function Connections() {
             lowContrast
             hideCloseButton
             title="MCP authentication is off"
-            subtitle="Any program on this computer can read your routes and propose changes. Restart with DETOUR_MCP_AUTH_MODE=key to require keys."
+            subtitle="Any program on this computer can read your routes and propose changes. Remove DETOUR_MCP_AUTH_MODE=none and restart to require keys."
           />
         ) : (
           <section className="dt-tile" aria-labelledby="keys-heading">

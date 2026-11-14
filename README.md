@@ -22,6 +22,7 @@ what's worth keeping, such as a rule you keep repeating or a runbook step that
 went out of date. You approve, edit or reject each proposal in the portal.
 
 - Runs on your machine in one Docker container. No account, no cloud service.
+- Local first. The portal asks you to sign in, and every AI tool needs its own key.
 - Your data stays in a local Docker volume until you choose to export it.
 - Agents never write directly. Every change is a proposal you can review and
   undo, and each AI tool uses its own revocable key.
@@ -86,7 +87,12 @@ cd detour-sh-ce
 docker compose up -d --build
 ```
 
-Open <http://127.0.0.1:3787>.
+Open <http://127.0.0.1:3787>. The portal asks for a sign-in token. Detour makes one
+the first time it starts. To show it:
+
+```bash
+docker compose exec detour cat /data/portal-token
+```
 
 ### Use the prebuilt image instead
 
@@ -124,7 +130,8 @@ Detour gives agents these tools:
 | `report_check_results` | Records pass or fail for each check and returns a summary to show you. |
 
 Cloud-hosted agents can't reach `127.0.0.1`, so only tools running on the same
-machine can connect.
+machine can connect. To let anything else connect, see
+[Hosting in the cloud](docs/cloud-hosting.md).
 
 ## Organize context
 
@@ -194,6 +201,9 @@ Set these variables before running `docker compose up`:
 | `DETOUR_USER_NAME` | `Local user` | Display name shown in the portal. |
 | `DETOUR_ENABLE_NESTED_DETOURS` | `false` | Set to `true` to allow Sub-detours. |
 | `DETOUR_IMAGE` | `detour-ce:local` | Image to run. Set to a release image to skip building. |
+| `DETOUR_PORTAL_TOKEN` | made on first start | The token that signs you in to the portal, 24 characters or more. Optional locally. Required when hosted. |
+| `DETOUR_PUBLIC_URL` | empty | Turns on hosted mode. The public `https://` address. Leave empty to run on this computer only. |
+| `DETOUR_SESSION_HOURS` | `24` | How long a portal sign-in lasts, from 1 to 168. |
 
 For example:
 
@@ -204,10 +214,21 @@ DETOUR_USER_NAME=Alex docker compose up -d --build
 In PowerShell, set `$env:DETOUR_USER_NAME="Alex"` first, then run
 `docker compose up -d --build`.
 
-## Keep it local
+## Local first, hosted only if secured
 
-The ports are bound to `127.0.0.1` on purpose. Don't expose ports 3787 or 3788
-through a reverse proxy, tunnel, or port forward.
+Detour is built to run on one computer, for one person. That is the supported default.
+
+- **On your computer:** the ports are published on `127.0.0.1` only. The portal needs a
+  sign-in token and every MCP request needs an access key.
+- **On a remote machine:** reach it through an SSH, SSM or Tailscale tunnel, so nothing is
+  open to the internet.
+- **At a public address:** possible, but you operate it. Set `DETOUR_PUBLIC_URL` and
+  `DETOUR_PORTAL_TOKEN` and put HTTPS in front. Detour refuses to start in hosted mode
+  without them. Don't publish ports 3787 or 3788 directly.
+
+Read [How Detour is secured](docs/security.md) and
+[Hosting in the cloud](docs/cloud-hosting.md) before you host it. Running Detour means
+you accept the [disclaimer](DISCLAIMER.md).
 
 ## Data, backup, and upgrades
 
@@ -255,13 +276,20 @@ To stop Detour, run `docker compose down`. Your data stays in the volume. Only
 - **AI tool can't connect:** confirm the key hasn't been revoked and that the
   tool sends the `Authorization` header. Some tools need a restart after config
   changes.
+- **Forgot the sign-in token:** run `docker compose exec detour cat /data/portal-token`.
+  To make a new one, delete that file with `docker compose exec detour rm /data/portal-token`
+  and run `docker compose restart detour`.
+- **Detour won't start:** run `docker compose logs detour`. A wrong setting stops it, and
+  the message names the setting.
 
 ## Getting help
 
 - Bugs and feature requests: [open an issue](https://github.com/detour-sh/detour-sh-ce/issues/new/choose).
 - Security issues: please don't open a public issue. See [SECURITY.md](SECURITY.md).
+- Securing and hosting it: [docs/security.md](docs/security.md) and [docs/cloud-hosting.md](docs/cloud-hosting.md).
 - Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE). Detour is provided as is, with no
+warranty. See the [disclaimer, limits of liability and indemnity](DISCLAIMER.md).

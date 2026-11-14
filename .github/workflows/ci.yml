@@ -83,6 +83,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # The portal needs a sign-in token. This one lives only for this job.
+      - name: Make a sign-in token for the test run
+        run: |
+          token="$(openssl rand -hex 24)"
+          echo "::add-mask::$token"
+          echo "DETOUR_PORTAL_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Start Detour
         run: docker compose up -d --build --wait --wait-timeout 120 detour
 

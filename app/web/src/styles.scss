@@ -549,3 +549,21 @@ html[data-theme-custom] .cds--header {
     outline-offset: 1px;
   }
 }
+
+// Sign-in page: one centered card, no navigation.
+.dt-signin {
+  display: grid;
+  place-items: center;
+  min-block-size: 100vh;
+  padding: $spacing-06 $spacing-05;
+  background: $background;
+}
+
+.dt-signin-card {
+  inline-size: 100%;
+  max-inline-size: 28rem;
+}
+
+.dt-signin-note {
+  font-size: 0.875rem;
+}
