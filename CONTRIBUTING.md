@@ -106,7 +106,9 @@ uv run --no-project --with pillow==11.3.0 python scripts/build_brand.py
 1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new version
    heading, and update the version in the README quick start.
 2. Merge to `main` and wait for CI to pass.
-3. Tag and push: `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`.
+3. Run the **_manual:release** workflow on `main` with the version, such as
+   `0.2.0`. It tags the commit and starts the release. Pushing a `v*.*.*` tag
+   by hand works too.
 
 The release workflow runs the tests, publishes signed amd64 and arm64 images
 to GitHub Container Registry, and creates the GitHub release from the
