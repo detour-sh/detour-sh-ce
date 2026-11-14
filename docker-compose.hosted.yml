@@ -1,0 +1,39 @@
+# Hosted deployment: Detour behind a Cloudflare Tunnel, with Cloudflare Access as the sign-in.
+# Use it on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.hosted.yml up -d
+# Nothing is published on the host. Only the tunnel reaches Detour, over the private compose network.
+# Required values (put them in a .env file that is NOT committed; see docs/hosting.md):
+#   DETOUR_PUBLIC_URL, DETOUR_MCP_PUBLIC_URL, DETOUR_ACCESS_TEAM_DOMAIN, DETOUR_ACCESS_AUD,
+#   DETOUR_MCP_ACCESS_AUD, TUNNEL_TOKEN
+services:
+  detour:
+    ports: !reset []
+    environment:
+      DETOUR_ACCESS_MODE: "proxy"
+      DETOUR_PUBLIC_URL: "${DETOUR_PUBLIC_URL:?set DETOUR_PUBLIC_URL}"
+      DETOUR_MCP_PUBLIC_URL: "${DETOUR_MCP_PUBLIC_URL:?set DETOUR_MCP_PUBLIC_URL}"
+      DETOUR_ACCESS_TEAM_DOMAIN: "${DETOUR_ACCESS_TEAM_DOMAIN:?set DETOUR_ACCESS_TEAM_DOMAIN}"
+      DETOUR_ACCESS_AUD: "${DETOUR_ACCESS_AUD:?set DETOUR_ACCESS_AUD}"
+      DETOUR_MCP_ACCESS_AUD: "${DETOUR_MCP_ACCESS_AUD:?set DETOUR_MCP_ACCESS_AUD}"
+      DETOUR_ACCESS_ALLOWED_EMAILS: "${DETOUR_ACCESS_ALLOWED_EMAILS:-}"
+      DETOUR_KEY_TTL_DAYS: "${DETOUR_KEY_TTL_DAYS:-90}"
+    expose:
+      - "3787"
+      - "3788"
+
+  tunnel:
+    # Pin by digest before production use (see docs/hosting-requirements.md, item H-12).
+    image: cloudflare/cloudflared:2025.11.1
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:?set TUNNEL_TOKEN}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    depends_on:
+      detour:
+        condition: service_healthy
+    restart: unless-stopped

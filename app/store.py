@@ -10,6 +10,7 @@ target is recorded as an event that can be undone.
 from __future__ import annotations
 
 import datetime as dt
+import contextvars
 import hashlib
 import json
 import os
@@ -25,7 +26,7 @@ DB_PATH = Path(os.environ.get("DETOUR_DB_PATH", str(DATA_DIR / "detour.sqlite"))
 NESTED_DETOURS_ENABLED = os.environ.get("DETOUR_ENABLE_NESTED_DETOURS", "false").lower() == "true"
 
 # Bump when init_db gains a migration. Databases at this version skip migrations.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BACKUPS_TO_KEEP = 5
 BUSY_TIMEOUT_SECONDS = 10
 STALE_AFTER_DAYS = 90
@@ -37,6 +38,13 @@ TARGET_KINDS = ("repo", "folder", "file", "topic", "artifact", "url")
 PROPOSAL_ACTIONS = ("add", "edit", "retire", "move", "create_route")
 PROPOSAL_STATUSES = ("pending", "approved", "rejected", "auto")
 YOU = "You"
+# Who is making the current request. The hosted portal sets this to the signed-in user's email.
+actor_var: contextvars.ContextVar[str] = contextvars.ContextVar("detour_actor", default=YOU)
+KEY_TTL_DAYS = int(os.environ.get("DETOUR_KEY_TTL_DAYS", "0") or 0)  # 0 = keys don't expire unless asked
+MAX_KEY_TTL_DAYS = 365
+MAX_IMPORT_ROUTES = 500
+MAX_IMPORT_ITEMS = 5000
+MAX_IMPORT_TARGETS = 5000
 
 MAX_TITLE = 200
 MAX_BODY = 20_000
@@ -173,7 +181,8 @@ CREATE TABLE IF NOT EXISTS mcp_access_keys (
   can_propose INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   last_used_at TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  expires_at TEXT
 );
 """
 
@@ -216,6 +225,8 @@ def init_db() -> None:
         conn.execute("PRAGMA foreign_keys = OFF")
         legacy = _rename_legacy_tables(conn)
         conn.executescript(SCHEMA)
+        if "expires_at" not in _columns(conn, "mcp_access_keys"):
+            conn.execute("ALTER TABLE mcp_access_keys ADD COLUMN expires_at TEXT")
         if legacy:
             _migrate_legacy(conn, legacy)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -467,8 +478,13 @@ def _require_route(conn, ref: str):
     return row
 
 
+def _actor(actor: str) -> str:
+    return actor_var.get() if actor == YOU else actor
+
+
 def _record(conn, entity, entity_id, route_id, action, actor, summary, before=None, after=None, proposal_id=None) -> str:
     event_id = make_id()
+    actor = _actor(actor)
     route = conn.execute("SELECT name FROM routes WHERE id = ?", (route_id,)).fetchone() if route_id else None
     conn.execute(
         "INSERT INTO events (id, entity, entity_id, route_id, route_name, action, actor, summary, before_json, after_json, proposal_id, created_at) "
@@ -649,7 +665,7 @@ def _new_item_state(route_id: str, payload: dict, actor: str) -> dict:
         "title": _text(payload, "title", MAX_TITLE, required=True),
         "body": _text(payload, "body", MAX_BODY),
         "pinned": int(bool(payload.get("pinned", False))), "status": "active",
-        "created_by": actor, "created_at": stamp, "updated_at": stamp,
+        "created_by": _actor(actor), "created_at": stamp, "updated_at": stamp,
     }
 
 
@@ -1201,7 +1217,7 @@ def hash_key(token: str) -> str:
 
 def _key_dict(row) -> dict:
     return {"id": row["id"], "name": row["name"], "can_propose": bool(row["can_propose"]), "created_at": row["created_at"],
-            "last_used_at": row["last_used_at"], "revoked_at": row["revoked_at"]}
+            "last_used_at": row["last_used_at"], "revoked_at": row["revoked_at"], "expires_at": row["expires_at"]}
 
 
 def list_keys() -> list[dict]:
@@ -1214,11 +1230,17 @@ def create_key(payload: dict) -> dict:
     can_propose = payload.get("can_propose", True)
     if not isinstance(can_propose, bool):
         raise ValueError("can_propose must be true or false")
+    days = payload.get("expires_in_days", KEY_TTL_DAYS or None)
+    expires_at = None
+    if days is not None:
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= MAX_KEY_TTL_DAYS:
+            raise ValueError(f"expires_in_days must be a whole number from 1 to {MAX_KEY_TTL_DAYS}")
+        expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     token = f"dtr_{secrets.token_urlsafe(32)}"
     key_id = make_id()
     with db() as conn:
-        conn.execute("INSERT INTO mcp_access_keys (id, name, token_hash, can_propose, created_at) VALUES (?, ?, ?, ?, ?)",
-                     (key_id, name, hash_key(token), int(can_propose), now_iso()))
+        conn.execute("INSERT INTO mcp_access_keys (id, name, token_hash, can_propose, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                     (key_id, name, hash_key(token), int(can_propose), now_iso(), expires_at))
         row = conn.execute("SELECT * FROM mcp_access_keys WHERE id = ?", (key_id,)).fetchone()
     return {"access_key": _key_dict(row), "token": token}
 
@@ -1249,7 +1271,8 @@ def verify_key(token: str) -> dict | None:
     if not token:
         return None
     with db() as conn:
-        row = conn.execute("SELECT * FROM mcp_access_keys WHERE token_hash = ? AND revoked_at IS NULL", (hash_key(token),)).fetchone()
+        row = conn.execute("SELECT * FROM mcp_access_keys WHERE token_hash = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+                           (hash_key(token), now_iso())).fetchone()
         if row is None:
             return None
         stamp = now_iso()
@@ -1261,7 +1284,8 @@ def verify_key(token: str) -> dict | None:
 
 def get_key(key_id: str) -> dict | None:
     with db() as conn:
-        row = conn.execute("SELECT * FROM mcp_access_keys WHERE id = ? AND revoked_at IS NULL", (key_id,)).fetchone()
+        row = conn.execute("SELECT * FROM mcp_access_keys WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+                           (key_id, now_iso())).fetchone()
         return _key_dict(row) if row else None
 
 
@@ -1285,6 +1309,9 @@ def import_all(payload: dict, actor: str = YOU) -> dict:
     routes, items, targets = payload.get("routes"), payload.get("items"), payload.get("targets")
     if not all(isinstance(value, list) for value in (routes, items, targets)):
         raise ValueError("routes, items and targets must be lists")
+    for name, values, limit in (("routes", routes, MAX_IMPORT_ROUTES), ("items", items, MAX_IMPORT_ITEMS), ("targets", targets, MAX_IMPORT_TARGETS)):
+        if len(values) > limit:
+            raise ValueError(f"too many {name} in one import (limit {limit})")
     with db() as conn:
         id_map: dict[str, str] = {}
         ordered = sorted(routes, key=lambda r: 0 if not r.get("parent_id") else 1)

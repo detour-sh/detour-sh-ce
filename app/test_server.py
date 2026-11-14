@@ -26,7 +26,7 @@ class PortalApiTests(unittest.TestCase):
         server.WEB_DIR = web
         server.reset_web_files()
         store.init_db()
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.DetourHandler)
+        self.httpd = server.PortalServer(("127.0.0.1", 0), server.DetourHandler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.httpd.server_port}"

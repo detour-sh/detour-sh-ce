@@ -16,10 +16,13 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.types import ToolAnnotations
 
+import access
 import store
 
 PORT = int(os.environ.get("DETOUR_MCP_PORT", "3788"))
-MCP_RESOURCE = f"http://127.0.0.1:{PORT}/mcp"
+ACCESS = access.load_config()
+MCP_RESOURCE = f"{ACCESS.mcp_url}/mcp" if ACCESS.hosted else f"http://127.0.0.1:{PORT}/mcp"
+ISSUER_URL = ACCESS.portal_url if ACCESS.hosted else "http://127.0.0.1:3787"
 AUTH_MODE = os.environ.get("DETOUR_MCP_AUTH_MODE", "key").strip().lower()
 ALLOW_STDIO = os.environ.get("DETOUR_MCP_ALLOW_STDIO", "false").lower() == "true"
 LOCAL_AGENT = {"id": None, "name": "Local agent", "can_propose": True}
@@ -66,7 +69,7 @@ options = {}
 if AUTH_MODE == "key":
     options = {
         "token_verifier": LocalAccessKeyVerifier(),
-        "auth": AuthSettings(issuer_url="http://127.0.0.1:3787", resource_server_url=MCP_RESOURCE,
+        "auth": AuthSettings(issuer_url=ISSUER_URL, resource_server_url=MCP_RESOURCE,
                              required_scopes=["detour:read"], validate_token_resource=True),
     }
 
@@ -183,6 +186,16 @@ def list_my_proposals(status: str = "all") -> list[dict]:
     return [{k: r[k] for k in ("id", "status", "action", "route", "proposed", "decision_note", "created_at")} for r in results]
 
 
+def build_app(config: access.AccessConfig | None = None, verifier: access.AccessVerifier | None = None):
+    """The MCP HTTP app. Host/Origin protection is always on; in proxy mode a valid Access token is required too."""
+    config = config or ACCESS
+    app = mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0",
+                                  transport_security=access.mcp_transport_security(config))
+    if config.hosted:
+        app.add_middleware(access.AccessMiddleware, verifier=verifier or access.mcp_verifier(config))
+    return app
+
+
 if __name__ == "__main__":
     store.init_db()
     if sys.argv[1:] == ["--stdio"]:
@@ -193,5 +206,5 @@ if __name__ == "__main__":
     else:
         import uvicorn
 
-        app = mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0")
-        uvicorn.run(app, host="0.0.0.0", port=PORT, log_level=mcp.settings.log_level.lower(), server_header=False)
+        uvicorn.run(build_app(), host="0.0.0.0", port=PORT, log_level=mcp.settings.log_level.lower(), server_header=False,
+                    timeout_keep_alive=10, limit_concurrency=100)

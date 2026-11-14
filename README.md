@@ -121,8 +121,8 @@ Detour gives agents these tools:
 | `propose_change` | Proposes adding, editing, retiring or moving an item, or creating a route. |
 | `get_proposal`, `list_my_proposals` | Check whether a proposal was approved, and read your note if it was rejected. |
 
-Cloud-hosted agents can't reach `127.0.0.1`, so only tools running on the same
-machine can connect.
+Cloud-hosted agents can't reach `127.0.0.1`. Only tools on the same machine can
+connect unless you set up [hosted mode](docs/hosting.md).
 
 ## Organize context
 
@@ -173,8 +173,13 @@ In PowerShell, set `$env:DETOUR_USER_NAME="Alex"` first, then run
 
 ## Keep it local
 
-The ports are bound to `127.0.0.1` on purpose. Don't expose ports 3787 or 3788
-through a reverse proxy, tunnel, or port forward.
+The ports are bound to `127.0.0.1` on purpose. The portal has no sign-in of its
+own, so don't expose ports 3787 or 3788 through a reverse proxy, tunnel, or port
+forward on their own.
+
+To reach Detour from another machine or from cloud-hosted agents, use the
+supported hosted setup: Detour behind Cloudflare Access and a Cloudflare Tunnel,
+with a sign-in check inside Detour as well. See [docs/hosting.md](docs/hosting.md).
 
 ## Data, backup, and upgrades
 

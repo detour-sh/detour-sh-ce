@@ -10,11 +10,13 @@ import json
 import mimetypes
 import os
 import re
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import access
 import store
 
 VERSION = "0.2.0"
@@ -30,7 +32,13 @@ BRAND_FILES = {
     "/assets/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
 MAX_BODY_BYTES = 2_000_000
-ALLOWED_HOSTS = {"127.0.0.1", "localhost", "detour"}
+ALLOWED_HOSTS = set(access.LOCAL_HOSTS)
+MAX_CONNECTIONS = int(os.environ.get("DETOUR_MAX_CONNECTIONS", "64"))
+REQUEST_TIMEOUT_SECONDS = 15
+
+# Hosting settings. Local mode (the default) changes nothing. See access.py and docs/hosting.md.
+ACCESS = access.load_config()
+VERIFIER: access.AccessVerifier | None = None
 
 # Paths the single-page app handles. Anything else that isn't a file or the API is a 404.
 APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|activity|connections|settings)$")
@@ -82,9 +90,16 @@ def reset_web_files() -> None:
     _web_files = None
 
 
-def session_info() -> dict:
+def portal_verifier() -> access.AccessVerifier:
+    global VERIFIER
+    if VERIFIER is None:
+        VERIFIER = access.portal_verifier(ACCESS)
+    return VERIFIER
+
+
+def session_info(identity: dict | None = None) -> dict:
     counts = store.proposal_counts()
-    return {
+    info = {
         "user_name": USER_NAME,
         "version": VERSION,
         "nested_enabled": store.NESTED_DETOURS_ENABLED,
@@ -93,17 +108,24 @@ def session_info() -> dict:
         "pending_count": counts["pending"],
         "data_path": str(store.DB_PATH),
     }
+    if ACCESS.hosted:
+        info["user_name"] = str((identity or {}).get("email") or USER_NAME)
+        info["mcp_endpoint"] = f"{ACCESS.mcp_url}/mcp"
+        del info["data_path"]  # no filesystem details for a remote browser
+    return info
 
 
 class DetourHandler(BaseHTTPRequestHandler):
     server_version = "detour"
     sys_version = ""
+    timeout = REQUEST_TIMEOUT_SECONDS  # a client that stalls mid-request can't hold a thread forever
 
     def version_string(self) -> str:
         return "detour"
 
     def log_message(self, format: str, *args) -> None:  # keep request lines, drop query strings
         if os.environ.get("DETOUR_QUIET_HTTP") != "true":
+            args = tuple(re.sub(r"\?\S*", "", arg, count=1) if isinstance(arg, str) else arg for arg in args)
             super().log_message(format, *args)
 
     def do_GET(self) -> None:
@@ -124,8 +146,18 @@ class DetourHandler(BaseHTTPRequestHandler):
             path = path.rstrip("/")
         params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         try:
-            if not self.valid_host():
+            if not self.valid_host(path):
                 return self.json({"error": "invalid host"}, HTTPStatus.BAD_REQUEST)
+            identity = None
+            if ACCESS.hosted and path != "/health":
+                try:
+                    identity = portal_verifier().verify(self.headers.get(access.ACCESS_HEADER))
+                except access.AccessDenied as exc:
+                    return self.json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
+                store.actor_var.set(str(identity.get("email") or identity.get("common_name") or "Signed-in user"))
+            else:
+                store.actor_var.set(store.YOU)
+            self.identity = identity
             if method in ("POST", "PUT"):
                 if not self.valid_write_origin():
                     return self.json({"error": "cross-origin write denied"}, HTTPStatus.FORBIDDEN)
@@ -172,7 +204,7 @@ class DetourHandler(BaseHTTPRequestHandler):
         created = HTTPStatus.CREATED
 
         if head == "session" and not rest and method == "GET":
-            return self.json(session_info())
+            return self.json(session_info(self.identity))
 
         if head == "routes":
             if not rest:
@@ -260,12 +292,16 @@ class DetourHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------ request checks
 
-    def valid_host(self) -> bool:
+    def valid_host(self, path: str = "") -> bool:
         host = self.headers.get("host", "")
         if not host or "@" in host or "," in host:
             return False
         try:
             parsed = urlparse(f"//{host}")
+            if ACCESS.hosted:  # behind the proxy the public name is the only valid one, on the default port
+                if path == "/health" and parsed.hostname in ALLOWED_HOSTS and parsed.port == self.server.server_port:
+                    return True  # the container's own healthcheck, which can't carry a sign-in
+                return (parsed.hostname or "").lower() == ACCESS.portal_host and parsed.port in (None, 443)
             return parsed.hostname in ALLOWED_HOSTS and parsed.port == self.server.server_port
         except ValueError:
             return False
@@ -274,6 +310,8 @@ class DetourHandler(BaseHTTPRequestHandler):
         if self.headers.get("sec-fetch-site", "").lower() == "cross-site":
             return False
         origin = self.headers.get("origin")
+        if ACCESS.hosted:
+            return origin == ACCESS.portal_origin  # browsers always send Origin on writes; a missing one isn't trusted here
         if not origin:
             return True
         return origin == f"http://{self.headers['host']}"
@@ -305,6 +343,8 @@ class DetourHandler(BaseHTTPRequestHandler):
         self.send_header("cache-control", cache)
         for name, value in SECURITY_HEADERS.items():
             self.send_header(name, value)
+        if ACCESS.hosted:
+            self.send_header("strict-transport-security", "max-age=31536000; includeSubDomains")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
@@ -325,9 +365,36 @@ class RequestTooLarge(Exception):
     pass
 
 
+class PortalServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a ceiling on simultaneous connections. Extra clients get a 503 instead of a new thread."""
+
+    daemon_threads = True
+    max_connections = MAX_CONNECTIONS
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(self.max_connections)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 2\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def main() -> None:
     init_db()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), DetourHandler)
+    server = PortalServer(("0.0.0.0", PORT), DetourHandler)
     print(f"Detour portal running on http://127.0.0.1:{PORT} with data at {store.DB_PATH}", flush=True)
     server.serve_forever()
 

@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from contextlib import closing
 from pathlib import Path
 
@@ -307,7 +308,57 @@ class KeyAndExportTests(StoreCase):
             store.import_all({"format": "nope"})
 
 
+class KeyExpiryAndActorTests(StoreCase):
+    def test_keys_can_expire(self):
+        created = store.create_key({"name": "short", "expires_in_days": 1})
+        self.assertIsNotNone(created["access_key"]["expires_at"])
+        self.assertIsNotNone(store.verify_key(created["token"]))
+        with store.db() as conn:
+            conn.execute("UPDATE mcp_access_keys SET expires_at = '2000-01-01T00:00:00Z'")
+        self.assertIsNone(store.verify_key(created["token"]))
+        self.assertIsNone(store.get_key(created["access_key"]["id"]))
+
+    def test_keys_do_not_expire_by_default(self):
+        self.assertIsNone(store.create_key({"name": "forever"})["access_key"]["expires_at"])
+
+    def test_expiry_is_validated(self):
+        for bad in (0, -1, 366, "30", 1.5, True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                store.create_key({"name": "x", "expires_in_days": bad})
+
+    def test_default_ttl_comes_from_the_environment(self):
+        with mock.patch.object(store, "KEY_TTL_DAYS", 90):
+            self.assertIsNotNone(store.create_key({"name": "hosted"})["access_key"]["expires_at"])
+
+    def test_actor_follows_the_signed_in_user(self):
+        route = store.create_route({"name": "app"})
+        token = store.actor_var.set("ben@example.com")
+        try:
+            item = store.create_item(route["id"], {"title": "Rule", "kind": "rule"})
+        finally:
+            store.actor_var.reset(token)
+        self.assertEqual(item["created_by"], "ben@example.com")
+        self.assertEqual(store.list_events(route["id"])[0]["actor"], "ben@example.com")
+        self.assertEqual(store.create_item(route["id"], {"title": "Other"})["created_by"], store.YOU)
+
+
 class MigrationTests(unittest.TestCase):
+    def test_v2_database_gains_key_expiry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = store.DATA_DIR, store.DB_PATH
+            store.DATA_DIR, store.DB_PATH = Path(tmp), Path(tmp) / "detour.sqlite"
+            try:
+                store.init_db()
+                with store.db() as conn:
+                    conn.execute("ALTER TABLE mcp_access_keys DROP COLUMN expires_at")
+                    conn.execute("PRAGMA user_version = 2")
+                store.init_db()
+                with store.db() as conn:
+                    self.assertIn("expires_at", store._columns(conn, "mcp_access_keys"))
+                self.assertTrue(list((Path(tmp) / "backups").glob("detour-schema2-*.sqlite")))
+            finally:
+                store.DATA_DIR, store.DB_PATH = previous
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.previous = store.DATA_DIR, store.DB_PATH

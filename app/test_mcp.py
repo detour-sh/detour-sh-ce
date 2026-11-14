@@ -95,3 +95,59 @@ class McpToolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_MCP, "the mcp package is not installed")
+class McpHttpGateTests(unittest.TestCase):
+    """The HTTP front door: Host checks always, plus the Access token when hosted."""
+
+    def setUp(self):
+        try:
+            from starlette.testclient import TestClient
+        except ImportError:
+            self.skipTest("starlette's test client needs httpx")
+        self.TestClient = TestClient
+        self.tmp = tempfile.TemporaryDirectory()
+        self.previous = store.DATA_DIR, store.DB_PATH
+        store.DATA_DIR = Path(self.tmp.name)
+        store.DB_PATH = store.DATA_DIR / "detour.sqlite"
+        store.init_db()
+        import mcp_server
+        self.mcp = importlib.reload(mcp_server)
+        self.token = store.create_key({"name": "t"})["token"]
+
+    def tearDown(self):
+        store.DATA_DIR, store.DB_PATH = self.previous
+        self.tmp.cleanup()
+
+    INIT = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+
+    def post(self, client, headers):
+        return client.post("/mcp", json=self.INIT, headers={"Accept": "application/json, text/event-stream", **headers})
+
+    def test_local_rejects_a_foreign_host_header(self):
+        import access
+        with self.TestClient(self.mcp.build_app(access.load_config({})), base_url="http://evil.example.com") as client:
+            response = self.post(client, {"Authorization": f"Bearer {self.token}"})
+        self.assertIn(response.status_code, (400, 403, 421))
+
+    def test_local_accepts_loopback_with_a_key(self):
+        import access
+        with self.TestClient(self.mcp.build_app(access.load_config({})), base_url="http://127.0.0.1:3788") as client:
+            self.assertEqual(self.post(client, {"Authorization": f"Bearer {self.token}"}).status_code, 200)
+            self.assertEqual(self.post(client, {}).status_code, 401)
+
+    def test_hosted_needs_the_access_token_and_the_key(self):
+        import access
+        import test_access as ta
+        config = access.load_config(ta.GOOD_ENV)
+        app = self.mcp.build_app(config, ta.verifier(aud=ta.MCP_AUD))
+        bearer = {"Authorization": f"Bearer {self.token}"}
+        gate = {"Cf-Access-Jwt-Assertion": ta.make_token(aud=ta.MCP_AUD)}
+        with self.TestClient(app, base_url="https://detour-mcp.example.com") as client:
+            self.assertEqual(self.post(client, bearer).status_code, 401)  # key alone is not enough
+            self.assertEqual(self.post(client, gate).status_code, 401)  # token alone is not enough
+            self.assertEqual(self.post(client, {**gate, **bearer}).status_code, 200)
+        other = self.mcp.build_app(config, ta.verifier(aud=ta.MCP_AUD))
+        with self.TestClient(other, base_url="https://evil.example.com") as client:
+            self.assertNotEqual(self.post(client, {**gate, **bearer}).status_code, 200)  # wrong Host

@@ -1,0 +1,111 @@
+# Workflow display name: _manual:hosting
+# One-time setup for hosted Detour. UNTESTED against the live Cloudflare API: run with dry_run first
+# and check the request shapes against current Cloudflare Access docs (docs/hosting-requirements.md, H-13).
+name: "_manual:hosting"
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        required: true
+        default: configure-access
+        options:
+          - configure-access
+      dry_run:
+        description: Print what would be sent and change nothing
+        type: boolean
+        default: true
+      portal_hostname:
+        description: Portal hostname, for example detour.example.com
+        type: string
+        required: true
+      mcp_hostname:
+        description: MCP hostname, for example detour-mcp.example.com (must differ from the portal)
+        type: string
+        required: true
+      allowed_emails:
+        description: Comma-separated emails allowed into the portal
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-hosting
+  cancel-in-progress: false
+
+jobs:
+  configure-access:
+    if: inputs.action == 'configure-access'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      PORTAL_HOST: ${{ inputs.portal_hostname }}
+      MCP_HOST: ${{ inputs.mcp_hostname }}
+      ALLOWED_EMAILS: ${{ inputs.allowed_emails }}
+    steps:
+      - name: Check inputs
+        run: |
+          set -euo pipefail
+          [ "$PORTAL_HOST" != "$MCP_HOST" ] || { echo "Portal and MCP hostnames must differ"; exit 1; }
+          for h in "$PORTAL_HOST" "$MCP_HOST"; do
+            [[ "$h" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || { echo "Bad hostname: $h"; exit 1; }
+          done
+          if [ "$DRY_RUN" != "true" ]; then
+            [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || {
+              echo "Add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets first (docs/hosting.md)."; exit 1; }
+          fi
+
+      - name: Configure Access applications
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID:-ACCOUNT}/access/apps"
+          cf() { # method path [json]
+            if [ "$DRY_RUN" = "true" ]; then echo "DRY RUN: $1 $2 ${3:-}" >&2; echo '{"result":{"id":"dry-run","aud":"dry-run-aud"}}'; return; fi
+            curl -fsS -X "$1" "$2" -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" ${3:+--data "$3"}
+          }
+          find_app() { # hostname -> app id or empty
+            [ "$DRY_RUN" = "true" ] && return 0
+            cf GET "$api" | jq -r --arg d "$1" '.result[]? | select(.domain == $d) | .id' | head -n1
+          }
+          ensure_app() { # name hostname -> prints "id aud"
+            local name="$1" host="$2" body existing out
+            body=$(jq -nc --arg n "$name" --arg d "$host" '{name:$n, domain:$d, type:"self_hosted", session_duration:"24h", app_launcher_visible:false}')
+            existing=$(find_app "$host")
+            if [ -n "$existing" ]; then out=$(cf PUT "$api/$existing" "$body"); else out=$(cf POST "$api" "$body"); fi
+            echo "$out" | jq -r '"\(.result.id) \(.result.aud)"'
+          }
+          ensure_policy() { # app_id name json
+            local id="$1" name="$2" body="$3" have
+            have=""
+            [ "$DRY_RUN" = "true" ] || have=$(cf GET "$api/$id/policies" | jq -r --arg n "$name" '.result[]? | select(.name == $n) | .id' | head -n1)
+            if [ -n "$have" ]; then cf PUT "$api/$id/policies/$have" "$body" >/dev/null; else cf POST "$api/$id/policies" "$body" >/dev/null; fi
+          }
+
+          read -r portal_id portal_aud < <(ensure_app "Detour portal" "$PORTAL_HOST")
+          read -r mcp_id mcp_aud < <(ensure_app "Detour MCP" "$MCP_HOST")
+
+          emails=$(jq -nc --arg e "$ALLOWED_EMAILS" '$e | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0)) | map({email:{email:.}})')
+          ensure_policy "$portal_id" "detour-people" "$(jq -nc --argjson inc "$emails" '{name:"detour-people", decision:"allow", precedence:1, include:$inc}')"
+          ensure_policy "$mcp_id" "detour-agents" '{"name":"detour-agents","decision":"non_identity","precedence":1,"include":[{"any_valid_service_token":{}}]}'
+
+          {
+            echo "## Detour hosting"
+            echo
+            [ "$DRY_RUN" = "true" ] && echo "**Dry run.** Nothing was changed."
+            echo
+            echo "Put these in the server .env (audience tags are not secrets):"
+            echo
+            echo '```'
+            echo "DETOUR_ACCESS_AUD=$portal_aud"
+            echo "DETOUR_MCP_ACCESS_AUD=$mcp_aud"
+            echo '```'
+            echo
+            echo "Next: create a service token per agent in Zero Trust, Access, Service Auth (the secret is shown once)."
+          } >> "$GITHUB_STEP_SUMMARY"

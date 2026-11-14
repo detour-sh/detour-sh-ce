@@ -7,6 +7,14 @@ import time
 
 
 def main() -> int:
+    # Refuse to start half-secure: a bad hosting configuration stops here, with a message.
+    import access
+
+    try:
+        access.load_config()
+    except access.ConfigError as exc:
+        print(f"Detour won't start: {exc}", flush=True)
+        return 2
     # Migrate once, before the portal and MCP processes open the database.
     from store import init_db
 

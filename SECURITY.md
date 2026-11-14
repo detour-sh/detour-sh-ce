@@ -5,6 +5,13 @@
 Security fixes are made on the `main` branch and included in the next release.
 Please run the latest version.
 
+## Scope
+
+In scope: the default local setup, and hosted mode as described in
+[docs/hosting.md](docs/hosting.md). Running Detour online any other way, such as
+publishing the ports directly, is unsupported because the portal has no sign-in
+of its own.
+
 ## Reporting a vulnerability
 
 Please do not report security vulnerabilities through public issues,

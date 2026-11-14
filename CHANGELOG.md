@@ -8,6 +8,28 @@ All notable changes to this project are documented here. The format follows
 
 Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 
+### Added
+
+- Hosted mode (`DETOUR_ACCESS_MODE=proxy`) for running Detour behind Cloudflare
+  Access and a Cloudflare Tunnel. Detour verifies the Access token itself on
+  every portal and MCP request, uses the public hostname and https origin for
+  its Host and Origin checks, and records the signed-in email as the actor.
+  Misconfiguration stops Detour from starting. See `docs/hosting.md`.
+- `docker-compose.hosted.yml` (tunnel sidecar, no published ports) and a manual
+  workflow that creates the Access applications.
+- Agent keys can expire (`expires_in_days`, or `DETOUR_KEY_TTL_DAYS` as the
+  default). Upgrading adds the column after the usual backup.
+- `docs/hosting-requirements.md`: the hosting spec, threat model and open work.
+
+### Security
+
+- The MCP endpoint now sets Host and Origin (DNS-rebinding) protection
+  explicitly. The SDK only enabled it when told the bind host was loopback.
+- The portal drops stalled connections after 15 seconds, caps simultaneous
+  connections (503 beyond `DETOUR_MAX_CONNECTIONS`, default 64), and limits
+  import size. Request logs no longer include query strings.
+- The default compose file sets memory, CPU and process limits.
+
 ### Changed
 
 - New portal built on IBM's Carbon Design System (React), in light and dark
