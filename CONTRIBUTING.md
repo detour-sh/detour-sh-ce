@@ -10,6 +10,13 @@ Thanks for helping improve Detour Community Edition.
 - For security issues, follow [SECURITY.md](SECURITY.md) instead of opening an
   issue.
 
+## Reporting bugs
+
+Use the bug report form. Fill in every field and tick the confirmations. Reports
+that skip the form, are mostly links, or are unreviewed AI output are closed
+without a reply. Maintainers label the rest `needs-triage` and answer as time
+allows.
+
 ## Development setup
 
 You need Python 3.12, Node.js 24 and Docker.
@@ -36,7 +43,14 @@ with hot reload and sends API calls to the portal on port 3787.
 The portal follows Carbon so that it stays consistent and can be upgraded:
 
 - Use Carbon components. The only custom patterns are `ProposalCard`,
-  `TargetList`, `HistoryList` and `CheckResults` in `app/web/src/components`.
+  `TargetList`, `HistoryList`, `CheckResults` and `ThemePicker` in
+  `app/web/src/components`.
+- Themes are Carbon tokens. `app/web/src/theme.js` turns six colors into
+  `--cds-*` variables, so don't restyle components for a theme. Change the
+  palette or the derivation there, and run `npm test` in `app/web`. The tests
+  check that every preset has readable contrast (WCAG AA).
+- Type follows Carbon's scale: 16px (`body-02`) for lead text, 14px for UI and
+  labels, and about 70 characters at most per line of prose.
 - Use Carbon tokens for color, spacing and type in `styles.scss`. Don't
   hard-code colors, sizes or fonts.
 - The portal and the MCP server both go through `app/store.py`. Add behavior
@@ -99,7 +113,9 @@ uv run --no-project --with pillow==11.3.0 python scripts/build_brand.py
 1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new version
    heading, and update the version in the README quick start.
 2. Merge to `main` and wait for CI to pass.
-3. Tag and push: `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`.
+3. Run the **_manual:release** workflow on `main` with the version, such as
+   `0.2.0`. It tags the commit and starts the release. Pushing a `v*.*.*` tag
+   by hand works too.
 
 The release workflow runs the tests, publishes signed amd64 and arm64 images
 to GitHub Container Registry, and creates the GitHub release from the

@@ -1,15 +1,14 @@
 import { useRef, useState } from "react";
-import { Button, InlineNotification, RadioButton, RadioButtonGroup } from "@carbon/react";
+import { Button, InlineNotification } from "@carbon/react";
 import { Download, Upload } from "@carbon/icons-react";
+import ThemePicker from "../components/ThemePicker.jsx";
 import { api } from "../api.js";
 import { useSession, usePageTitle } from "../App.jsx";
 import { ErrorNote } from "../components/common.jsx";
-import { readThemeChoice, saveThemeChoice } from "../util.js";
 
 export default function SettingsPage() {
   usePageTitle("Settings");
   const { session, refreshSession, hosted } = useSession();
-  const [theme, setTheme] = useState(readThemeChoice());
   const [imported, setImported] = useState(null);
   const [error, setError] = useState(null);
   const fileInput = useRef(null);
@@ -30,7 +29,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="dt-page">
+    <div className="dt-page dt-page--narrow">
       <div className="dt-page-header">
         <div>
           <h1>Settings</h1>
@@ -40,19 +39,7 @@ export default function SettingsPage() {
       <div className="dt-stack">
         <section className="dt-tile" aria-labelledby="appearance-heading">
           <h2 id="appearance-heading">Appearance</h2>
-          <RadioButtonGroup
-            legendText="Color theme"
-            name="theme"
-            valueSelected={theme}
-            onChange={(value) => {
-              setTheme(value);
-              saveThemeChoice(value);
-            }}
-          >
-            <RadioButton id="theme-system" value="system" labelText="Match the system" />
-            <RadioButton id="theme-light" value="light" labelText="Light" />
-            <RadioButton id="theme-dark" value="dark" labelText="Dark" />
-          </RadioButtonGroup>
+          <ThemePicker />
         </section>
 
         <section className="dt-tile" aria-labelledby="data-heading">

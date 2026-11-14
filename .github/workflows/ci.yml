@@ -1,20 +1,23 @@
-name: ci
+name: "_auto:deploy"
 
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+  issues:
+    types: [opened]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'issues' && format('issue-{0}', github.event.issue.number) || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
+    if: github.event_name != 'issues'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -33,6 +36,11 @@ jobs:
         run: python -B -m unittest discover -s app -p 'test_*.py'
         env:
           DETOUR_QUIET_HTTP: "true"
+
+      - name: Portal theme tests
+        # Plain Node, no install: the theme engine has no dependencies.
+        run: node --test
+        working-directory: app/web
 
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
@@ -67,6 +75,7 @@ jobs:
           retention-days: 14
 
   ui:
+    if: github.event_name != 'issues'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -97,3 +106,36 @@ jobs:
       - name: Stop
         if: always()
         run: docker compose --profile test down -v
+
+  # Keeps the issue tracker small: label new reports for a maintainer, and close
+  # anything that did not come from an issue form or is mostly links. Uses only
+  # the built-in token and the gh CLI, so there is no third-party code to trust.
+  triage:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NUMBER: ${{ github.event.issue.number }}
+      ASSOCIATION: ${{ github.event.issue.author_association }}
+      BODY: ${{ github.event.issue.body }}
+    steps:
+      - name: Label the report, or close it if it skipped the form
+        run: |
+          case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) exit 0 ;; esac
+          reason=""
+          if ! printf '%s' "$BODY" | grep -q '^### '; then
+            reason="it was not created from one of the issue forms"
+          elif [ "$(printf '%s' "$BODY" | grep -oE 'https?://' | wc -l)" -gt 5 ]; then
+            reason="it contains more than five links"
+          fi
+          if [ -n "$reason" ]; then
+            gh issue comment "$NUMBER" --body "Closing this because ${reason}. Please open a new issue with the form at https://github.com/${GH_REPO}/issues/new/choose and fill in every field."
+            gh issue close "$NUMBER" --reason "not planned"
+            exit 0
+          fi
+          gh label create needs-triage --color ededed --description "Waiting for a maintainer" 2>/dev/null || true
+          gh issue edit "$NUMBER" --add-label needs-triage

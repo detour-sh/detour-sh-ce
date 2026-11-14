@@ -93,30 +93,3 @@ export function lineDiff(before, after) {
   while (j < b.length) out.push({ t: "add", text: b[j++] });
   return out;
 }
-
-const THEME_KEY = "detour-theme";
-
-export function readThemeChoice() {
-  try {
-    return localStorage.getItem(THEME_KEY) || "system";
-  } catch {
-    return "system";
-  }
-}
-
-export function applyTheme(choice) {
-  const dark = choice === "dark" || (choice === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  const root = document.documentElement;
-  root.classList.toggle("cds--g100", dark);
-  root.classList.toggle("cds--g10", !dark);
-  root.dataset.theme = dark ? "dark" : "light";
-}
-
-export function saveThemeChoice(choice) {
-  try {
-    localStorage.setItem(THEME_KEY, choice);
-  } catch {
-    // Private windows can refuse storage; the choice still applies for this visit.
-  }
-  applyTheme(choice);
-}

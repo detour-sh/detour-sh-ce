@@ -6,8 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
-
 ### Security
 
 - Detour now answers `403` to clients on public IP addresses, on both the portal
@@ -24,8 +22,24 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
   commands: `server.py setup-code` and `server.py reset-owner --yes`. Local mode
   is unchanged and still has no sign-in.
 
+## [0.2.0] - 2026-11-14
+
+Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
+
+### Added
+
+- Themes. Settings now offers Carbon light and dark, six ready-made themes
+  (Ocean, Forest, Sunset, Aubergine, Midnight and High contrast), and a custom
+  theme where you pick six colors: primary, secondary, text, links, background
+  and header. Shades, borders and button labels are worked out from them, and
+  Settings warns when a pair is hard to read. Your choice stays in your
+  browser.
+
 ### Changed
 
+- Readability: lead text is 16px, labels are 14px, long paragraphs stop at
+  about 70 characters, Settings uses a narrower column, and tab content lines
+  up with the page title.
 - New portal built on IBM's Carbon Design System (React), in light and dark
   themes. It replaces the server-rendered pages.
 - "Detours" are now **routes**. A route applies wherever its targets match: a
@@ -66,18 +80,6 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 - Releases include the image SBOM and a checksums file, each with a Sigstore
   signature.
 
-## [0.1.1] - 2026-11-10
-
-### Changed
-
-- New logo and favicons.
-- Updated the MCP library to 2.3.0.
-
-### Added
-
-- Releases include the image SBOM and a checksums file, each with a Sigstore
-  signature.
-
 ## [0.1.0] - 2026-11-10
 
 ### Added
@@ -92,6 +94,6 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 - Signed multi-architecture images (amd64 and arm64) on GitHub Container
   Registry.
 
-[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.0...v0.1.1
+[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/detour-sh/detour-sh-ce/releases/tag/v0.1.0
