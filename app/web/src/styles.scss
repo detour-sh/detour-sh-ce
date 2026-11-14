@@ -44,6 +44,20 @@ body {
   margin-right: $spacing-03;
 }
 
+.dt-auth {
+  display: flex;
+  justify-content: center;
+  padding: $spacing-09 $spacing-05;
+}
+
+.dt-auth-card {
+  width: 100%;
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-05;
+}
+
 .dt-page {
   max-width: 82rem;
   margin: 0;

@@ -15,6 +15,15 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
   ports published to the internet (for example `docker run -p 3787:3787`). Set
   `DETOUR_ALLOW_PUBLIC_CLIENTS=true` to turn this off. Not recommended.
 
+### Added
+
+- Hosted mode (`DETOUR_HOSTED=true`, `DETOUR_PUBLIC_URL=https://...`) for running
+  Detour on a server. It adds a one-owner sign-in (setup code, password, session
+  cookie, lockout), serves your public hostname over HTTPS only, and refuses to
+  start without a sign-in, an `https://` address and MCP access keys. New admin
+  commands: `server.py setup-code` and `server.py reset-owner --yes`. Local mode
+  is unchanged and still has no sign-in.
+
 ### Changed
 
 - New portal built on IBM's Carbon Design System (React), in light and dark

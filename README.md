@@ -194,6 +194,9 @@ Set these variables before running `docker compose up`:
 | `DETOUR_USER_NAME` | `Local user` | Display name shown in the portal. |
 | `DETOUR_ENABLE_NESTED_DETOURS` | `false` | Set to `true` to allow Sub-detours. |
 | `DETOUR_ALLOW_PUBLIC_CLIENTS` | `false` | Leave as `false`. Detour has no sign-in, so it answers `403` to any client on a public IP address. Setting `true` turns that off. |
+| `DETOUR_HOSTED` | `false` | Run on a server with a sign-in. See [Run Detour on a server](#run-detour-on-a-server). |
+| `DETOUR_PUBLIC_URL` | empty | The `https://` address people open. Required when `DETOUR_HOSTED=true`, refused otherwise. |
+| `DETOUR_MCP_PUBLIC_URL` | derived | The `https://` address agents use for MCP, if it isn't `<public host>:3788`. |
 | `DETOUR_IMAGE` | `detour-ce:local` | Image to run. Set to a release image to skip building. |
 
 For example:
@@ -216,6 +219,48 @@ address (`403`), even if someone publishes the port with
 Tailscale addresses are allowed. A reverse proxy or tunnel on the same host looks
 like a private address, so this does not make those safe. Always run Detour with
 the Compose file as shipped, and don't set `DETOUR_ALLOW_PUBLIC_CLIENTS=true`.
+
+## Run Detour on a server
+
+Most people should skip this. Detour is built to run on your own computer. If you
+do want it on a server (a VM, or a container service), turn on hosted mode. It adds
+a sign-in and makes Detour accept your public address.
+
+Hosted mode refuses to start unless it is configured safely:
+
+- `DETOUR_HOSTED=true` and `DETOUR_PUBLIC_URL=https://detour.example.com` are both
+  required. `DETOUR_PUBLIC_URL` without `DETOUR_HOSTED` is an error, and plain `http://`
+  is refused except for `localhost`.
+- MCP access keys must stay on (`DETOUR_MCP_AUTH_MODE` unset or `key`).
+
+How it works:
+
+- **One owner.** On first start Detour prints a one-time setup code in its log. The
+  first person to enter it at your address becomes the owner and picks a password
+  (12 characters or more). Until then every data route answers `401`.
+- **Sign-in.** The password is stored as a salted scrypt hash. The session cookie is
+  `HttpOnly`, `SameSite=Strict` and `Secure`, lasts 30 days (7 idle), and Detour sends
+  `Strict-Transport-Security`. Five wrong passwords lock sign-in for 30 seconds, then
+  the wait doubles up to 15 minutes.
+- **Lost the code or the password?** On the server, run
+  `docker compose exec detour python /app/server.py setup-code` (before setup) or
+  `docker compose exec detour python /app/server.py reset-owner --yes` (after). Your
+  routes, items and access keys are kept.
+- **Agents** still connect with access keys on port 3788. Create them in the portal.
+
+What you provide:
+
+1. **HTTPS.** Put a TLS-terminating proxy or load balancer in front (Caddy, nginx, an
+   AWS load balancer, Cloudflare). It must pass the `Host` header through unchanged and
+   forward to port 3787 (portal) and 3788 (MCP). Keep the Compose ports on `127.0.0.1`
+   if the proxy runs on the same machine.
+2. **Local disk for the data volume.** Detour uses SQLite. Use block storage (a normal
+   disk or EBS), not network file storage such as NFS or EFS, and back it up.
+3. **The firewall.** Allow only 443 (and your MCP port) from the internet. Never open 3787
+   or 3788 directly.
+
+In hosted mode the "refuse public clients" safeguard is off, because behind a proxy
+every request looks private. The sign-in and access keys are what protect your data.
 
 ## Data, backup, and upgrades
 

@@ -10,6 +10,11 @@ services:
       DETOUR_USER_NAME: "${DETOUR_USER_NAME:-Local user}"
       # Keep false. Detour has no sign-in, so it refuses clients on public IP addresses.
       DETOUR_ALLOW_PUBLIC_CLIENTS: "${DETOUR_ALLOW_PUBLIC_CLIENTS:-false}"
+      # Hosted mode is off by default. Turning it on requires sign-in and an https public address.
+      # See "Run Detour on a server" in the README before changing these.
+      DETOUR_HOSTED: "${DETOUR_HOSTED:-false}"
+      DETOUR_PUBLIC_URL: "${DETOUR_PUBLIC_URL:-}"
+      DETOUR_MCP_PUBLIC_URL: "${DETOUR_MCP_PUBLIC_URL:-}"
     ports:
       - "127.0.0.1:3787:3787"
       - "127.0.0.1:3788:3788"

@@ -27,7 +27,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
-COPY store.py netguard.py server.py mcp_server.py run.py /app/
+COPY store.py netguard.py auth.py hosting.py server.py mcp_server.py run.py /app/
 COPY brand /app/brand
 COPY --from=web /web/dist /app/web/dist
 

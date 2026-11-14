@@ -16,11 +16,16 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.types import ToolAnnotations
 
+import hosting
 import netguard
 import store
 
 PORT = int(os.environ.get("DETOUR_MCP_PORT", "3788"))
-MCP_RESOURCE = f"http://127.0.0.1:{PORT}/mcp"
+try:
+    HOSTING = hosting.load()
+except hosting.ConfigError as _error:
+    raise SystemExit(f"Detour can't start: {_error}") from None
+MCP_RESOURCE = HOSTING.mcp_url or f"http://127.0.0.1:{PORT}/mcp"
 AUTH_MODE = os.environ.get("DETOUR_MCP_AUTH_MODE", "key").strip().lower()
 ALLOW_STDIO = os.environ.get("DETOUR_MCP_ALLOW_STDIO", "false").lower() == "true"
 LOCAL_AGENT = {"id": None, "name": "Local agent", "can_propose": True}
@@ -68,7 +73,7 @@ options = {}
 if AUTH_MODE == "key":
     options = {
         "token_verifier": LocalAccessKeyVerifier(),
-        "auth": AuthSettings(issuer_url="http://127.0.0.1:3787", resource_server_url=MCP_RESOURCE,
+        "auth": AuthSettings(issuer_url=HOSTING.public_url or "http://127.0.0.1:3787", resource_server_url=MCP_RESOURCE,
                              required_scopes=["detour:read"], validate_token_resource=True),
     }
 
@@ -228,5 +233,7 @@ if __name__ == "__main__":
     else:
         import uvicorn
 
-        app = netguard.ClientGuard(mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0"))
+        # Hosted mode sits behind a proxy, so the client address says nothing. Access keys are the gate there.
+        app = netguard.ClientGuard(mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0"),
+                                   allow_public=True if HOSTING.hosted else None)
         uvicorn.run(app, host="0.0.0.0", port=PORT, log_level=mcp.settings.log_level.lower(), server_header=False)

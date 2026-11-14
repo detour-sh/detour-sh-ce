@@ -28,7 +28,7 @@ DB_PATH = Path(os.environ.get("DETOUR_DB_PATH", str(DATA_DIR / "detour.sqlite"))
 NESTED_DETOURS_ENABLED = os.environ.get("DETOUR_ENABLE_NESTED_DETOURS", "false").lower() == "true"
 
 # Bump when init_db gains a migration. Databases at this version skip migrations.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 BACKUPS_TO_KEEP = 5
 BUSY_TIMEOUT_SECONDS = 10
 STALE_AFTER_DAYS = 90
@@ -211,6 +211,32 @@ CREATE TABLE IF NOT EXISTS mcp_access_keys (
   created_at TEXT NOT NULL,
   last_used_at TEXT,
   revoked_at TEXT
+);
+
+-- Hosted mode only (see auth.py). Empty in local mode.
+CREATE TABLE IF NOT EXISTS owner (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  display_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS owner_sessions (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS setup_codes (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  code_hash TEXT NOT NULL,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
 );
 """
 
