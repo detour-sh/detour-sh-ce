@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Change password in hosted mode (Settings, Password). It needs the current password,
+  shares the sign-in lockout, and signs out every other browser.
+
+## [0.3.0] - 2026-11-14
+
 ### Security
 
 - Detour now answers `403` to clients on public IP addresses, on both the portal
@@ -21,15 +28,6 @@ All notable changes to this project are documented here. The format follows
   start without a sign-in, an `https://` address and MCP access keys. New admin
   commands: `server.py setup-code` and `server.py reset-owner --yes`. Local mode
   is unchanged and still has no sign-in.
-- Change password in hosted mode (Settings, Password). It needs the current password,
-  shares the sign-in lockout, and signs out every other browser.
-
-## [0.2.0] - 2026-11-14
-
-Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
-
-### Added
-
 - Themes. Settings now offers Carbon light and dark, six ready-made themes
   (Ocean, Forest, Sunset, Aubergine, Midnight and High contrast), and a custom
   theme where you pick six colors: primary, secondary, text, links, background
@@ -42,6 +40,13 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 - Readability: lead text is 16px, labels are 14px, long paragraphs stop at
   about 70 characters, Settings uses a narrower column, and tab content lines
   up with the page title.
+
+## [0.2.0] - 2026-11-14
+
+Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
+
+### Changed
+
 - New portal built on IBM's Carbon Design System (React), in light and dark
   themes. It replaces the server-rendered pages.
 - "Detours" are now **routes**. A route applies wherever its targets match: a
@@ -96,6 +101,7 @@ Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 - Signed multi-architecture images (amd64 and arm64) on GitHub Container
   Registry.
 
-[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/detour-sh/detour-sh-ce/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/detour-sh/detour-sh-ce/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/detour-sh/detour-sh-ce/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/detour-sh/detour-sh-ce/releases/tag/v0.1.0

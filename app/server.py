@@ -21,7 +21,7 @@ import hosting
 import netguard
 import store
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 APP_NAME = "detour"
 PORT = int(os.environ.get("PORT", "3787"))
 MCP_PORT = int(os.environ.get("DETOUR_MCP_PORT", "3788"))
