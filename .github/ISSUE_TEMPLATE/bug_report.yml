@@ -28,6 +28,8 @@ body:
     attributes:
       label: Version or commit
       description: Output of `git rev-parse --short HEAD` in your clone.
+    validations:
+      required: true
   - type: input
     id: environment
     attributes:
@@ -39,3 +41,14 @@ body:
       label: Logs
       description: Relevant output from `docker compose logs detour`.
       render: text
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you submit
+      options:
+        - label: I reproduced this on the latest release or on `main`.
+          required: true
+        - label: I wrote or checked every part of this report myself. It is not unreviewed AI output.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true

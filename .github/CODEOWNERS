@@ -1,0 +1,5 @@
+# Every change needs the maintainer's review, and the synced reference data
+# is called out so it is never edited by hand.
+*            @benjamin-mcdaniel
+/reference/  @benjamin-mcdaniel
+/.github/    @benjamin-mcdaniel
