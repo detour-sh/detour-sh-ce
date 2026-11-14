@@ -21,6 +21,8 @@ All notable changes to this project are documented here. The format follows
   start without a sign-in, an `https://` address and MCP access keys. New admin
   commands: `server.py setup-code` and `server.py reset-owner --yes`. Local mode
   is unchanged and still has no sign-in.
+- Change password in hosted mode (Settings, Password). It needs the current password,
+  shares the sign-in lockout, and signs out every other browser.
 
 ## [0.2.0] - 2026-11-14
 

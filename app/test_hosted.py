@@ -172,6 +172,31 @@ class HostedModeTests(HostedTestCase):
         self.assertEqual(self.call("/api/auth/status")[0], 200)
         self.assertEqual(self.call("/api/routes")[0], 401)
 
+    def test_change_password_over_http(self):
+        token = self.set_up_owner()
+        status, _, response = self.call("/api/auth/sign-in", "POST", {"password": PASSWORD})
+        other = response.getheader("set-cookie").split(";", 1)[0].split("=", 1)[1]
+        body = {"current_password": PASSWORD, "new_password": "a brand new passphrase", "new_password_confirm": "a brand new passphrase"}
+        # Not signed in: refused, and nothing leaks.
+        self.assertEqual(self.call("/api/auth/password", "POST", body)[0], 401)
+        # Wrong current password.
+        self.assertEqual(self.call("/api/auth/password", "POST", {**body, "current_password": "not the password at all"}, cookie=token)[0], 403)
+        # A bad origin is refused like any other write.
+        self.assertEqual(self.call("/api/auth/password", "POST", body, origin="https://evil.example.com", cookie=token)[0], 403)
+        status, data, _ = self.call("/api/auth/password", "POST", body, cookie=token)
+        self.assertEqual(status, 200)
+        self.assertTrue(data["signed_in"])
+        self.assertEqual(self.call("/api/routes", cookie=token)[0], 200)  # this browser stays signed in
+        self.assertEqual(self.call("/api/routes", cookie=other)[0], 401)  # every other browser is signed out
+        self.assertEqual(self.call("/api/auth/sign-in", "POST", {"password": "a brand new passphrase"})[0], 200)
+
+    def test_change_password_validates_the_new_one(self):
+        token = self.set_up_owner()
+        body = {"current_password": PASSWORD, "new_password": "short", "new_password_confirm": "short"}
+        status, data, _ = self.call("/api/auth/password", "POST", body, cookie=token)
+        self.assertEqual(status, 400)
+        self.assertIn("at least", data["error"])
+
     def test_https_is_pinned_with_hsts_and_pages_are_not_cached(self):
         _, _, response = self.call("/health")
         self.assertIn("max-age", response.getheader("strict-transport-security"))
@@ -193,7 +218,7 @@ class LocalModeUnchangedTests(HostedTestCase):
         self.assertEqual(data, {"hosted": False, "setup_required": False, "signed_in": True, "user_name": "Local user"})
         self.assertIsNone(response.getheader("strict-transport-security"))
         self.assertEqual(self.call("/api/routes", host=host)[0], 200)
-        for action in ("setup", "sign-in", "sign-out"):
+        for action in ("setup", "sign-in", "sign-out", "password"):
             self.assertEqual(self.call(f"/api/auth/{action}", "POST", {}, host=host, origin=f"http://{host}")[0], 404)
 
     def test_the_public_hostname_is_not_accepted_in_local_mode(self):

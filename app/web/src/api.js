@@ -35,6 +35,7 @@ export const api = {
   setup: (body) => request("POST", "/api/auth/setup", body),
   signIn: (body) => request("POST", "/api/auth/sign-in", body),
   signOut: () => request("POST", "/api/auth/sign-out", {}),
+  changePassword: (body) => request("POST", "/api/auth/password", body),
 
   session: () => request("GET", "/api/session"),
 
