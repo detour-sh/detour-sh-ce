@@ -46,8 +46,15 @@ jobs:
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version must look like 0.2.0"; exit 1; }
           grep -q "^## \[${VERSION}\] - " CHANGELOG.md || { echo "::error::CHANGELOG.md has no ${VERSION} section"; exit 1; }
-          gh api "repos/${GH_REPO}/git/refs" -f "ref=refs/tags/v${VERSION}" -f "sha=${GITHUB_SHA}"
-          gh workflow run release.yml --ref "v${VERSION}"
+          # Reuse the tag if an earlier run already made it on this commit, so a
+          # failed start can be run again. A tag on any other commit is an error.
+          existing=$(gh api "repos/${GH_REPO}/git/ref/tags/v${VERSION}" --jq '.object.sha' 2>/dev/null || true)
+          if [ -z "$existing" ]; then
+            gh api "repos/${GH_REPO}/git/refs" -f "ref=refs/tags/v${VERSION}" -f "sha=${GITHUB_SHA}"
+          elif [ "$existing" != "$GITHUB_SHA" ]; then
+            echo "::error::v${VERSION} already exists on a different commit (${existing})"; exit 1
+          fi
+          gh workflow run release.yml --ref "v${VERSION}" -f "version=${VERSION}"
 
   test:
     if: startsWith(github.ref, 'refs/tags/v')
