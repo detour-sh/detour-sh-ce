@@ -10,6 +10,13 @@ Thanks for helping improve Detour Community Edition.
 - For security issues, follow [SECURITY.md](SECURITY.md) instead of opening an
   issue.
 
+## Reporting bugs
+
+Use the bug report form. Fill in every field and tick the confirmations. Reports
+that skip the form, are mostly links, or are unreviewed AI output are closed
+without a reply. Maintainers label the rest `needs-triage` and answer as time
+allows.
+
 ## Development setup
 
 You need Python 3.12, Node.js 24 and Docker.
