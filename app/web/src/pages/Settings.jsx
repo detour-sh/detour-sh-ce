@@ -8,7 +8,7 @@ import { ErrorNote } from "../components/common.jsx";
 
 export default function SettingsPage() {
   usePageTitle("Settings");
-  const { session, refreshSession } = useSession();
+  const { session, refreshSession, hosted } = useSession();
   const [imported, setImported] = useState(null);
   const [error, setError] = useState(null);
   const fileInput = useRef(null);
@@ -33,7 +33,7 @@ export default function SettingsPage() {
       <div className="dt-page-header">
         <div>
           <h1>Settings</h1>
-          <p>{session ? `Signed in locally as ${session.user_name}.` : ""}</p>
+          <p>{session ? `Signed in${hosted ? "" : " locally"} as ${session.user_name}.` : ""}</p>
         </div>
       </div>
       <div className="dt-stack">

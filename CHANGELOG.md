@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Detour now answers `403` to clients on public IP addresses, on both the portal
+  and MCP ports, so it stays private even if the container is started with
+  ports published to the internet (for example `docker run -p 3787:3787`). Set
+  `DETOUR_ALLOW_PUBLIC_CLIENTS=true` to turn this off. Not recommended.
+
+### Added
+
+- Hosted mode (`DETOUR_HOSTED=true`, `DETOUR_PUBLIC_URL=https://...`) for running
+  Detour on a server. It adds a one-owner sign-in (setup code, password, session
+  cookie, lockout), serves your public hostname over HTTPS only, and refuses to
+  start without a sign-in, an `https://` address and MCP access keys. New admin
+  commands: `server.py setup-code` and `server.py reset-owner --yes`. Local mode
+  is unchanged and still has no sign-in.
+
 ## [0.2.0] - 2026-11-14
 
 Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.

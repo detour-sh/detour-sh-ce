@@ -13,7 +13,7 @@ import {
   SkipToContent,
   Tag,
 } from "@carbon/react";
-import { Activity, CheckmarkOutline, Connect, Flow, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
+import { Activity, CheckmarkOutline, Connect, Flow, Logout, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
 import { api } from "./api.js";
 import { useRouter } from "./router.jsx";
 import Review from "./pages/Review.jsx";
@@ -24,8 +24,9 @@ import ChecksPage from "./pages/Checks.jsx";
 import Connections from "./pages/Connections.jsx";
 import SettingsPage from "./pages/Settings.jsx";
 import NotFound from "./pages/NotFound.jsx";
+import SignIn from "./pages/SignIn.jsx";
 
-const SessionContext = createContext({ session: null, refreshSession: () => {} });
+const SessionContext = createContext({ session: null, refreshSession: () => {}, signOut: () => {} });
 
 export function useSession() {
   return useContext(SessionContext);
@@ -62,14 +63,41 @@ function page(path) {
 }
 
 export default function App() {
+  const [auth, setAuth] = useState(null);
+  const [authFailed, setAuthFailed] = useState(false);
+  const refreshAuth = useCallback(() => {
+    api.authStatus().then((status) => { setAuth(status); setAuthFailed(false); }).catch(() => setAuthFailed(true));
+  }, []);
+  useEffect(refreshAuth, [refreshAuth]);
+  useEffect(() => {
+    window.addEventListener("detour:signed-out", refreshAuth);
+    return () => window.removeEventListener("detour:signed-out", refreshAuth);
+  }, [refreshAuth]);
+
+  if (authFailed) {
+    return (
+      <main className="dt-auth" id="main-content">
+        <p>Detour isn't answering. Check that it is running, then reload this page.</p>
+      </main>
+    );
+  }
+  if (!auth) return null;
+  if (!auth.signed_in) return <SignIn status={auth} onDone={refreshAuth} />;
+  return <Signed auth={auth} refreshAuth={refreshAuth} />;
+}
+
+function Signed({ auth, refreshAuth }) {
   const [session, setSession] = useState(null);
   const refreshSession = useCallback(() => {
     api.session().then(setSession).catch(() => {});
   }, []);
   useEffect(refreshSession, [refreshSession]);
+  const signOut = useCallback(() => {
+    api.signOut().finally(refreshAuth);
+  }, [refreshAuth]);
 
   return (
-    <SessionContext.Provider value={{ session, refreshSession }}>
+    <SessionContext.Provider value={{ session, refreshSession, signOut, hosted: auth.hosted, userName: auth.user_name }}>
       <HeaderContainer render={Shell} />
     </SessionContext.Provider>
   );
@@ -79,7 +107,7 @@ export default function App() {
 // An inline function would be a new component type on every render and remount every page.
 function Shell({ isSideNavExpanded, onClickSideNavExpand }) {
   const { path, navigate } = useRouter();
-  const { session } = useSession();
+  const { session, hosted, signOut, userName } = useSession();
   const go = (event, href) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey) return;
     event.preventDefault();
@@ -117,9 +145,15 @@ function Shell({ isSideNavExpanded, onClickSideNavExpand }) {
           Detour
         </HeaderName>
         <HeaderGlobalBar>
-          <Tag type="cool-gray" size="sm" className="dt-header-tag" title="Detour only listens on this computer">
-            Local only
-          </Tag>
+          {hosted ? (
+            <Tag type="blue" size="sm" className="dt-header-tag" title="Detour is hosted and requires sign-in">
+              Hosted
+            </Tag>
+          ) : (
+            <Tag type="cool-gray" size="sm" className="dt-header-tag" title="Detour only listens on this computer">
+              Local only
+            </Tag>
+          )}
           <HeaderGlobalAction
             aria-label={session ? `${session.user_name}: settings` : "Settings"}
             tooltipAlignment="end"
@@ -127,6 +161,11 @@ function Shell({ isSideNavExpanded, onClickSideNavExpand }) {
           >
             <UserAvatar size={20} />
           </HeaderGlobalAction>
+          {hosted ? (
+            <HeaderGlobalAction aria-label={`Sign out ${userName || ""}`.trim()} tooltipAlignment="end" onClick={signOut}>
+              <Logout size={20} />
+            </HeaderGlobalAction>
+          ) : null}
         </HeaderGlobalBar>
         <SideNav aria-label="Primary" expanded={isSideNavExpanded} onSideNavBlur={onClickSideNavExpand} href="#main-content">
           <SideNavItems>

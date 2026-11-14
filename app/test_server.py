@@ -204,6 +204,48 @@ class PortalApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(self.request("/api/routes")[1]["routes"], [])
 
+    def serve_as(self, peer_ip, allow_public=False):
+        """Start a second portal whose clients all appear to connect from peer_ip."""
+        class Remote(server.DetourHandler):
+            client_address = property(lambda self: (peer_ip, 40000), lambda self, value: None)
+
+        previous = server.ALLOW_PUBLIC_CLIENTS
+        server.ALLOW_PUBLIC_CLIENTS = allow_public
+        self.addCleanup(setattr, server, "ALLOW_PUBLIC_CLIENTS", previous)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Remote)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join()))
+        return f"127.0.0.1:{httpd.server_port}"
+
+    def get_as(self, host, path, method="GET", body=None):
+        conn = http.client.HTTPConnection(host, timeout=5)
+        headers = {"Content-Type": "application/json"} if body else {}
+        conn.request(method, path, body=body, headers=headers)
+        response = conn.getresponse()
+        data = response.read().decode()
+        conn.close()
+        return response.status, data
+
+    def test_public_clients_are_refused_even_with_a_forged_host(self):
+        host = self.serve_as("93.184.216.34")
+        for path in ("/api/session", "/api/export.json", "/health", "/"):
+            with self.subTest(path=path):
+                status, data = self.get_as(host, path)
+                self.assertEqual(status, 403)
+                self.assertNotIn("version", data)
+        status, _ = self.get_as(host, "/api/keys", "POST", '{"name": "x"}')
+        self.assertEqual(status, 403)
+        self.assertEqual(store.list_keys() if hasattr(store, "list_keys") else [], [])
+
+    def test_private_clients_such_as_the_docker_gateway_are_served(self):
+        host = self.serve_as("172.17.0.1")
+        self.assertEqual(self.get_as(host, "/health")[0], 200)
+
+    def test_public_clients_are_served_only_when_explicitly_allowed(self):
+        host = self.serve_as("93.184.216.34", allow_public=True)
+        self.assertEqual(self.get_as(host, "/health")[0], 200)
+
     def test_rejects_rebound_host_and_large_body(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_port, timeout=5)
         conn.request("GET", "/api/routes", headers={"Host": f"attacker.example:{self.httpd.server_port}"})

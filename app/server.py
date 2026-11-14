@@ -10,11 +10,15 @@ import json
 import mimetypes
 import os
 import re
+import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import auth
+import hosting
+import netguard
 import store
 
 VERSION = "0.2.0"
@@ -31,6 +35,15 @@ BRAND_FILES = {
 }
 MAX_BODY_BYTES = 2_000_000
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "detour"}
+# Public-internet clients are refused unless DETOUR_ALLOW_PUBLIC_CLIENTS=true. See netguard.py.
+ALLOW_PUBLIC_CLIENTS = netguard.public_clients_allowed()
+
+# Hosted mode (see hosting.py) puts a sign-in in front of every /api route. A bad combination
+# of settings stops Detour from starting instead of leaving the portal open.
+try:
+    HOSTING = hosting.load()
+except hosting.ConfigError as _error:
+    raise SystemExit(f"Detour can't start: {_error}") from None
 
 # Paths the single-page app handles. Anything else that isn't a file or the API is a 404.
 APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|checks|activity|connections|settings)$")
@@ -88,7 +101,8 @@ def session_info() -> dict:
         "user_name": USER_NAME,
         "version": VERSION,
         "nested_enabled": store.NESTED_DETOURS_ENABLED,
-        "mcp_endpoint": f"http://127.0.0.1:{MCP_PORT}/mcp",
+        "mcp_endpoint": HOSTING.mcp_url or f"http://127.0.0.1:{MCP_PORT}/mcp",
+        "hosted": HOSTING.hosted,
         "mcp_auth": os.environ.get("DETOUR_MCP_AUTH_MODE", "key").strip().lower(),
         "pending_count": counts["pending"],
         "data_path": str(store.DB_PATH),
@@ -124,6 +138,10 @@ class DetourHandler(BaseHTTPRequestHandler):
             path = path.rstrip("/")
         params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         try:
+            # Hosted mode sits behind a proxy, so every client looks private or public by accident of
+            # the network. The sign-in is the gate there, not the client address.
+            if not netguard.client_allowed(self.client_address[0], ALLOW_PUBLIC_CLIENTS or HOSTING.hosted):
+                return self.send(netguard.REFUSAL, "application/json; charset=utf-8", HTTPStatus.FORBIDDEN)
             if not self.valid_host():
                 return self.json({"error": "invalid host"}, HTTPStatus.BAD_REQUEST)
             if method in ("POST", "PUT"):
@@ -131,7 +149,11 @@ class DetourHandler(BaseHTTPRequestHandler):
                     return self.json({"error": "cross-origin write denied"}, HTTPStatus.FORBIDDEN)
                 if self.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
                     return self.json({"error": "application/json required"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+            if path.startswith("/api/auth/"):
+                return self.auth_api(method, path)
             if path.startswith("/api/"):
+                if HOSTING.hosted and not self.current_session():
+                    return self.json({"error": "sign in required", "setup_required": not auth.owner_exists()}, HTTPStatus.UNAUTHORIZED)
                 return self.api(method, path, params)
             if method != "GET":
                 return self.json({"error": "method not allowed"}, HTTPStatus.METHOD_NOT_ALLOWED)
@@ -153,6 +175,9 @@ class DetourHandler(BaseHTTPRequestHandler):
             return self.json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
             self.json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except auth.AuthError as exc:
+            headers = {"retry-after": str(exc.retry_after)} if exc.retry_after else None
+            self.json({"error": str(exc)}, exc.status, headers=headers)
         except store.Forbidden as exc:
             self.json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except store.Conflict as exc:
@@ -283,6 +308,8 @@ class DetourHandler(BaseHTTPRequestHandler):
         host = self.headers.get("host", "")
         if not host or "@" in host or "," in host:
             return False
+        if HOSTING.hosted and host.lower() == HOSTING.host:
+            return True
         try:
             parsed = urlparse(f"//{host}")
             return parsed.hostname in ALLOWED_HOSTS and parsed.port == self.server.server_port
@@ -295,7 +322,40 @@ class DetourHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("origin")
         if not origin:
             return True
+        if HOSTING.hosted and self.headers["host"].lower() == HOSTING.host:
+            return origin in HOSTING.allowed_origins()
         return origin == f"http://{self.headers['host']}"
+
+    # ------------------------------------------------------------ sign-in (hosted mode)
+
+    def current_session(self) -> dict | None:
+        return auth.session_for_token(auth.read_cookie(self.headers.get("cookie"), auth.SESSION_COOKIE))
+
+    def auth_status(self, signed_in: bool | None = None) -> dict:
+        if not HOSTING.hosted:
+            return {"hosted": False, "setup_required": False, "signed_in": True, "user_name": USER_NAME}
+        if signed_in is None:
+            signed_in = self.current_session() is not None
+        return {"hosted": True, "setup_required": not auth.owner_exists(), "signed_in": signed_in,
+                "user_name": auth.owner_display_name() if signed_in else None}
+
+    def auth_api(self, method: str, path: str) -> None:
+        action = path.removeprefix("/api/auth/")
+        if action == "status" and method == "GET":
+            return self.json(self.auth_status())
+        if not HOSTING.hosted or method != "POST" or action not in ("setup", "sign-in", "sign-out"):
+            return self.json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+        body = self.body_json()
+        secure = HOSTING.secure_cookie
+        label = auth.describe_user_agent(self.headers.get("user-agent", ""))
+        if action == "sign-out":
+            auth.sign_out(auth.read_cookie(self.headers.get("cookie"), auth.SESSION_COOKIE))
+            return self.json(self.auth_status(signed_in=False), headers={"set-cookie": auth.cleared_cookie(secure)})
+        if action == "setup":
+            token, status = auth.claim_owner(body, label), HTTPStatus.CREATED
+        else:
+            token, status = auth.sign_in(body, label), HTTPStatus.OK
+        return self.json(self.auth_status(signed_in=True), status, headers={"set-cookie": auth.session_cookie(token, secure)})
 
     def body_json(self) -> dict:
         try:
@@ -324,6 +384,8 @@ class DetourHandler(BaseHTTPRequestHandler):
         self.send_header("cache-control", cache)
         for name, value in SECURITY_HEADERS.items():
             self.send_header(name, value)
+        if HOSTING.secure_cookie:
+            self.send_header("strict-transport-security", "max-age=31536000")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
@@ -344,12 +406,57 @@ class RequestTooLarge(Exception):
     pass
 
 
+COMMAND_HELP = """Usage: python /app/server.py [command]
+
+  (no command)       Run the portal.
+  setup-code         Print a new one-time setup code. Hosted mode, before setup only.
+  reset-owner --yes  Hosted mode: remove the owner, sign every browser out and print a
+                     new setup code. Saved routes, items and access keys are kept.
+"""
+
+
+def command(argv: list[str]) -> int:
+    """Admin commands, run with `docker compose exec detour python /app/server.py ...`."""
+    name = argv[0] if argv else ""
+    if name in ("-h", "--help", "help"):
+        print(COMMAND_HELP)
+        return 0
+    if name not in ("setup-code", "reset-owner"):
+        print(COMMAND_HELP, file=sys.stderr)
+        return 2
+    if not HOSTING.hosted:
+        print("This command only applies in hosted mode (DETOUR_HOSTED=true). Local Detour has no sign-in.", file=sys.stderr)
+        return 1
+    init_db()
+    if name == "setup-code":
+        if auth.owner_exists():
+            print(f"Detour is already set up. To start over, run: {auth.RESET_OWNER_COMMAND}", file=sys.stderr)
+            return 1
+        print(auth.setup_code_banner(auth.issue_setup_code(), HOSTING.public_url))
+        return 0
+    if argv[1:] != ["--yes"]:
+        print("This removes the owner and signs out every browser. Saved context and access keys are kept.\n"
+              f"Run again with --yes to confirm: {auth.RESET_OWNER_COMMAND}", file=sys.stderr)
+        return 1
+    print("Owner removed and every browser signed out.")
+    print(auth.setup_code_banner(auth.reset_owner(), HOSTING.public_url))
+    return 0
+
+
 def main() -> None:
     init_db()
+    if HOSTING.hosted:
+        print(f"Hosted mode: sign-in required. Public address {HOSTING.public_url}", flush=True)
+        if not auth.owner_exists():
+            print(auth.setup_code_banner(auth.issue_setup_code(), HOSTING.public_url), flush=True)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), DetourHandler)
     print(f"Detour portal running on http://127.0.0.1:{PORT} with data at {store.DB_PATH}", flush=True)
+    if ALLOW_PUBLIC_CLIENTS:
+        print(f"WARNING: {netguard.SETTING}=true. Anyone who can reach this port can read and change your data.", flush=True)
     server.serve_forever()
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        raise SystemExit(command(sys.argv[1:]))
     main()

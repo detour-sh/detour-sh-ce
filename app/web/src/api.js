@@ -20,6 +20,10 @@ async function request(method, path, body) {
   } catch {
     // Non-JSON error page; fall through with an empty body.
   }
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    // The session ended (hosted mode). Let the app show the sign-in screen again.
+    window.dispatchEvent(new Event("detour:signed-out"));
+  }
   if (!response.ok) {
     throw new ApiError(data.error || `Request failed (${response.status})`, response.status);
   }
@@ -27,6 +31,11 @@ async function request(method, path, body) {
 }
 
 export const api = {
+  authStatus: () => request("GET", "/api/auth/status"),
+  setup: (body) => request("POST", "/api/auth/setup", body),
+  signIn: (body) => request("POST", "/api/auth/sign-in", body),
+  signOut: () => request("POST", "/api/auth/sign-out", {}),
+
   session: () => request("GET", "/api/session"),
 
   routes: () => request("GET", "/api/routes"),

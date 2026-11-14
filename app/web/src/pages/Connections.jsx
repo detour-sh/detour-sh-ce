@@ -58,7 +58,7 @@ function SetupTabs({ endpoint, token }) {
 
 export default function Connections() {
   usePageTitle("Agent connections");
-  const { session } = useSession();
+  const { session, hosted } = useSession();
   const keys = useResource(() => api.keys(), []);
   const [name, setName] = useState("");
   const [canPropose, setCanPropose] = useState(true);
@@ -102,7 +102,11 @@ export default function Connections() {
           <CodeSnippet type="single" feedback="Copied">
             {endpoint}
           </CodeSnippet>
-          <p className="dt-muted">Only tools on this computer can connect. Cloud-hosted agents can't reach 127.0.0.1.</p>
+          <p className="dt-muted">
+            {hosted
+              ? "Agents connect with an access key. Create one below and keep it secret: anyone holding it can read your routes."
+              : "Only tools on this computer can connect. Cloud-hosted agents can't reach 127.0.0.1."}
+          </p>
         </section>
 
         {authOff ? (
