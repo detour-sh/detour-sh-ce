@@ -92,6 +92,30 @@ class PortalApiTests(unittest.TestCase):
         _, data, _ = self.request(f"/api/routes/{route['id']}/context")
         self.assertEqual(data["layers"][0]["items"][0]["body"], "changed by hand")
 
+    def test_route_map_and_plan_over_http(self):
+        _, data, _ = self.request("/api/routes", "POST", {"name": "openrouter", "targets": [{"kind": "folder", "value": "~/code/openrouter"}]})
+        route = data["route"]
+        status, data, _ = self.request(f"/api/routes/{route['id']}/map")
+        self.assertEqual((status, data["saved"], data["order"]), (200, False, []))
+        graph = {
+            "nodes": [{"id": "start", "type": "start", "title": "Start"}, {"id": "rules", "type": "stop", "title": "Rules", "x": 10, "y": 20},
+                      {"id": "end", "type": "end", "title": "End"}],
+            "edges": [{"id": "e1", "from": "start", "to": "rules", "kind": "road"}, {"id": "e2", "from": "rules", "to": "end", "kind": "road"}],
+        }
+        status, data, _ = self.request(f"/api/routes/{route['id']}/map", "PUT", {"graph": graph})
+        self.assertEqual((status, data["order"]), (200, ["rules"]))
+        status, data, _ = self.request(f"/api/routes/{route['id']}/map", "PUT", {"graph": {"nodes": [], "edges": []}})
+        self.assertEqual(status, 400)
+        _, data, _ = self.request(f"/api/routes/{route['id']}/plan")
+        self.assertEqual([s["title"] for s in data["stops"]], ["Rules"])
+        stop = data["stops"][0]["id"]
+        store.record_route_run({"id": None, "name": "Claude Code"}, [{"stop": stop, "status": "pass"}], route_ref=route["id"])
+        _, data, _ = self.request("/api/map-runs")
+        self.assertEqual((data["runs"][0]["outcome"], data["runs"][0]["agent"]), ("passed", "Claude Code"))
+        status, _, _ = self.request("/api/routes/missing/map")
+        self.assertEqual(status, 404)
+        self.assertEqual(self.request("/map")[0], 200)
+
     def test_checks_skips_includes_and_runs_over_http(self):
         _, data, _ = self.request("/api/routes", "POST", {"name": "Global", "scope": "global"})
         glob = data["route"]

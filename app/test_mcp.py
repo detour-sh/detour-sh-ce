@@ -91,6 +91,30 @@ class McpToolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "paused"):
             self.mcp.get_checks(route="app")
 
+    def test_get_route_plan_and_report_route_progress(self):
+        graph = {
+            "nodes": [{"id": "start", "type": "start", "title": "Start"}, {"id": "safety", "type": "gate", "title": "Safety"},
+                      {"id": "end", "type": "end", "title": "End"}],
+            "edges": [{"id": "e1", "from": "start", "to": "safety", "kind": "road"}, {"id": "e2", "from": "safety", "to": "end", "kind": "road"}],
+        }
+        store.save_map(self.app["id"], graph)
+        plan = self.mcp.get_route_plan(folder="/home/me/code/app")
+        self.assertEqual([s["title"] for s in plan["stops"]], ["Follow Global", "Safety"])
+        self.assertIn("report_route_progress", plan["instructions"])
+        with self.assertRaises(ValueError):
+            self.mcp.get_route_plan()
+        reader = store.create_key({"name": "Reader", "can_propose": False})["access_key"]["id"]
+        results = [{"stop": s["id"], "status": "pass", "evidence": "checked"} for s in plan["stops"]]
+        with self.as_key(reader):  # a progress report is a log, not a context change, so read-only keys may send it
+            run = self.mcp.report_route_progress(results, folder="/home/me/code/app")
+        self.assertEqual((run["outcome"], run["agent"]), ("passed", "Reader"))
+        self.assertIn("✓ Safety", run["summary"])
+        with self.as_key(reader), self.assertRaisesRegex(ValueError, "get_route_plan"):
+            self.mcp.report_route_progress([{"stop": "ghost", "status": "pass"}], folder="/home/me/code/app")
+        store.update_route(self.app["id"], {"paused": True})
+        with self.assertRaisesRegex(ValueError, "paused"):
+            self.mcp.get_route_plan(route="app")
+
     def test_tools_are_annotated(self):
         tools = {tool.name: tool for tool in self.mcp.mcp._tool_manager.list_tools()} if hasattr(self.mcp.mcp, "_tool_manager") else None
         if tools is None:
@@ -99,6 +123,8 @@ class McpToolTests(unittest.TestCase):
         self.assertFalse(tools["propose_change"].annotations.read_only_hint)
         self.assertTrue(tools["get_checks"].annotations.read_only_hint)
         self.assertFalse(tools["report_check_results"].annotations.destructive_hint)
+        self.assertTrue(tools["get_route_plan"].annotations.read_only_hint)
+        self.assertFalse(tools["report_route_progress"].annotations.destructive_hint)
         # A retried auto-approved note would be added twice, so clients must not retry blindly.
         self.assertFalse(tools["propose_change"].annotations.idempotent_hint)
 

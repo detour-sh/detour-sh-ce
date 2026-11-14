@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Route map**: a drag-and-drop canvas (new **Route map** page) where you draw
+  the road an agent must travel for a route. Boxes are **stops** (rules to
+  follow) and **gates** (requirements to verify with evidence). Lines are the
+  **road** between them, or **detours**: labelled bypasses such as "mvp deploy"
+  that let an agent skip stops on purpose.
+- MCP tools `get_route_plan` and `report_route_progress`. The plan joins the
+  roads of every layer that applies (Global, then Project, then Sub-detour). An
+  agent reports each stop. A stop it leaves out is "not run", a stop after a
+  failed one is "blocked", and every detour it takes is logged with its reason.
+- Route runs appear on the Route map page, under **Runs**.
+- Maps are included in exports and imports.
+
+Route maps make skipped rules visible. They can't physically stop an agent
+from ignoring a stop.
+
 ## [0.2.0] - 2026-11-14
 
 Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.

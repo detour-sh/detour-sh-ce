@@ -122,6 +122,8 @@ Detour gives agents these tools:
 | `get_proposal`, `list_my_proposals` | Check whether a proposal was approved, and read your note if it was rejected. |
 | `get_checks` | Lists the checks to verify here, and the ones a route skips. |
 | `report_check_results` | Records pass or fail for each check and returns a summary to show you. |
+| `get_route_plan` | Returns the road to follow: every layer's stops and gates in order, and the detours you allow. |
+| `report_route_progress` | Records each stop the agent worked through and each detour it took. |
 
 Cloud-hosted agents can't reach `127.0.0.1`, so only tools running on the same
 machine can connect.
@@ -170,6 +172,38 @@ Every run is kept under **Check runs**. On a route's **Checks** tab you can:
 
 Detour never runs anything itself. The agent does the checking, and a check it
 couldn't verify counts as a fail.
+
+## Route map
+
+Checks say what must be true. A **route map** says what an agent must work
+through, and in what order. Open **Route map**, pick a route and draw its road
+on the canvas:
+
+- **Stop:** rules the agent must read and follow. Link it to an item if you
+  like.
+- **Gate:** a requirement the agent must verify and give evidence for.
+- **Road:** drag from a box's right dot to the next box's left dot. A road runs
+  from Start to End in one line.
+- **Detour:** drag from a box's bottom-left dot to the bottom-right dot of a
+  later box, and give it a label such as *mvp deploy*. An agent may skip the
+  stops in between, but only when the label applies, and it must say why.
+
+Before it starts, the agent calls `get_route_plan`. The plan joins the roads of
+every layer that applies: Global first, then Project, then Sub-detour. A layer
+without a map counts as one stop that says to follow that route. The agent then
+reports with `report_route_progress`:
+
+```text
+Route for ~/code/openrouter: 3 passed, 1 detoured
+  ✓ Follow Global    Acknowledged.
+  ✓ Project rules    Acknowledged.
+  ↷ Safety review    Detour “mvp deploy”: No real users yet.
+  ✓ Ship             Acknowledged.
+```
+
+A stop the agent leaves out is **not run**. A stop after a failed one is
+**blocked**. Runs are kept under **Runs** on the Route map page. Detour can't
+physically stop an agent from ignoring a stop, but it makes every skip visible.
 
 ## Review what agents propose
 

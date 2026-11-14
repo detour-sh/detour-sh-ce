@@ -80,7 +80,9 @@ mcp = MCPServer(
         "When you learn something the user will want next time (a rule they repeat, a decision, a fix to an outdated runbook), "
         "call propose_change with a short reason. The user reviews proposals in the Detour portal; don't ask them to copy anything by hand. "
         "Before you call a task done, call get_checks for the same folder, repo or route, verify each check against the actual work, "
-        "then call report_check_results and show the user the summary it returns. A check you couldn't verify is a fail, not a pass."
+        "then call report_check_results and show the user the summary it returns. A check you couldn't verify is a fail, not a pass. "
+        "Some routes also have a map: an ordered road of stops and gates for each layer. When the user asks you to follow the route, "
+        "or get_route_plan returns stops for your folder, repo or topic, work through every stop in order and report each one with report_route_progress."
     ),
     **options,
 )
@@ -197,6 +199,42 @@ def report_check_results(results: list[dict], route: str = "", folder: str = "",
 
     Show the user the returned "summary" as is. Recording results never changes the user's context."""
     return store.record_check_run(current_key(), results, route, folder, repo, topic, file, url)
+
+
+@mcp.tool(annotations=READ)
+@agent_errors
+def get_route_plan(route: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "", url: str = "") -> dict:
+    """Get the road to follow for what you're working on: the stops and gates of every layer that applies, in order,
+    Global first. Name a route (ID or name), or describe where you are with folder, repo, topic, file or url.
+    Work through the stops in order. A stop is rules to follow (read its item and note). A gate is a requirement you must verify
+    against the real work and give evidence for. Don't skip ahead: a failed stop blocks everything after it.
+    A detour is a bypass the user allowed. Take one only when its label really applies to this task, and say why.
+    Then call report_route_progress with the same arguments."""
+    if not any((route, folder, repo, topic, file, url)):
+        raise ValueError("Pass a route, or the folder, repo, topic, file or url you are working on.")
+    if route:
+        found = store.get_route(route)
+        if found and found["paused"]:
+            raise ValueError(f"Agent access to “{found['name']}” is paused by the user.")
+    plan = store.plan_route(route, folder, repo, topic, file, url)
+    plan["instructions"] = ("Do the stops in order. Then call report_route_progress with one {stop, status, evidence} for each stop you did, "
+                            "and {detour, evidence} for each detour you took (you needn't report the stops it skips).")
+    return plan
+
+
+@mcp.tool(annotations=REPORT)
+@agent_errors
+def report_route_progress(results: list[dict], route: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "",
+                          url: str = "") -> dict:
+    """Record how you got on with each stop from get_route_plan. Pass the same route, folder, repo, topic, file or url.
+
+    results: [{"stop": stop id, "status": "pass" or "fail", "evidence": one or two sentences}] for each stop you worked through,
+    and [{"detour": detour id, "evidence": why its label applies to this task}] for each detour you took.
+    A gate needs evidence, such as "CI is green on commit abc123". A stop you couldn't do is a fail, not a pass.
+    Stops you leave out are recorded as not run, and a stop after a failed one is recorded as blocked.
+
+    Show the user the returned "summary" as is. Recording progress never changes the user's context."""
+    return store.record_route_run(current_key(), results, route, folder, repo, topic, file, url)
 
 
 @mcp.tool(annotations=READ)

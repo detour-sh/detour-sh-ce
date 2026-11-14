@@ -33,7 +33,7 @@ MAX_BODY_BYTES = 2_000_000
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "detour"}
 
 # Paths the single-page app handles. Anything else that isn't a file or the API is a 404.
-APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|checks|activity|connections|settings)$")
+APP_PATHS = re.compile(r"^/(?:|review|routes|routes/[A-Za-z0-9_-]{1,64}|checks|map|activity|connections|settings)$")
 
 SECURITY_HEADERS = {
     "content-security-policy": (
@@ -203,6 +203,13 @@ class DetourHandler(BaseHTTPRequestHandler):
                 return self.json(store.get_context(route_ref=route_id, mark_used=False))
             if tail == ["checks"] and method == "GET":
                 return self.json(store.plan_checks(route_ref=route_id))
+            if tail == ["map"]:
+                if method == "GET":
+                    return self.json(store.get_map(route_id))
+                if method == "PUT":
+                    return self.json(store.save_map(route_id, body.get("graph")))
+            if tail == ["plan"] and method == "GET":
+                return self.json(store.plan_route(route_ref=route_id))
             if tail == ["skips"] and method == "POST":
                 return self.json({"skip": store.add_skip(route_id, body)}, created)
             if tail == ["includes"] and method == "POST":
@@ -236,6 +243,9 @@ class DetourHandler(BaseHTTPRequestHandler):
                 return self.json({"runs": store.list_check_runs(int(params.get("limit", "50")))})
             if len(rest) == 1:
                 return self.json({"run": store.get_check_run(rest[0])})
+
+        if head == "map-runs" and not rest and method == "GET":
+            return self.json({"runs": store.list_route_runs(int(params.get("limit", "50")))})
 
         if head == "targets" and len(rest) == 2 and rest[1] == "remove" and method == "POST":
             store.remove_target(rest[0])

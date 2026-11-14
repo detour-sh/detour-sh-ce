@@ -299,7 +299,7 @@ class KeyAndExportTests(StoreCase):
         store.create_item(app["id"], {"kind": "decision", "title": "D", "body": "B"})
         exported = store.export_all()
         counts = store.import_all(json.loads(json.dumps(exported)))
-        self.assertEqual(counts, {"routes": 2, "items": 1, "targets": 1, "skips": 0, "includes": 0})
+        self.assertEqual(counts, {"routes": 2, "items": 1, "targets": 1, "skips": 0, "includes": 0, "maps": 0})
         subs = [r for r in store.list_routes() if r["scope"] == "sub"]
         self.assertEqual(len(subs), 2)
         self.assertNotEqual(subs[0]["parent_id"], subs[1]["parent_id"])

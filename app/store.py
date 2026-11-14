@@ -28,7 +28,7 @@ DB_PATH = Path(os.environ.get("DETOUR_DB_PATH", str(DATA_DIR / "detour.sqlite"))
 NESTED_DETOURS_ENABLED = os.environ.get("DETOUR_ENABLE_NESTED_DETOURS", "false").lower() == "true"
 
 # Bump when init_db gains a migration. Databases at this version skip migrations.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 BACKUPS_TO_KEEP = 5
 BUSY_TIMEOUT_SECONDS = 10
 STALE_AFTER_DAYS = 90
@@ -38,6 +38,12 @@ POLICIES = ("ask", "notes", "read")
 ITEM_KINDS = ("rule", "decision", "runbook", "prompt", "note", "reference", "check")
 CHECK_STATUSES = ("pass", "fail")
 MAX_RESULTS = 200
+MAP_NODE_TYPES = ("start", "stop", "gate", "end")
+MAP_EDGE_KINDS = ("road", "detour")
+MAP_REPORT_STATUSES = ("pass", "fail")
+MAX_MAP_NODES = 100
+MAX_MAP_EDGES = 300
+MAP_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 TARGET_KINDS = ("repo", "folder", "file", "topic", "artifact", "url")
 PROPOSAL_ACTIONS = ("add", "edit", "retire", "move", "create_route")
 PROPOSAL_STATUSES = ("pending", "approved", "rejected", "auto")
@@ -202,6 +208,28 @@ CREATE TABLE IF NOT EXISTS check_runs (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_check_runs_created ON check_runs(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS route_maps (
+  route_id TEXT PRIMARY KEY REFERENCES routes(id) ON DELETE CASCADE,
+  graph_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS map_runs (
+  id TEXT PRIMARY KEY,
+  key_id TEXT,
+  agent TEXT NOT NULL,
+  label TEXT NOT NULL,
+  scope_json TEXT NOT NULL,
+  results_json TEXT NOT NULL,
+  passed INTEGER NOT NULL,
+  failed INTEGER NOT NULL,
+  detoured INTEGER NOT NULL,
+  blocked INTEGER NOT NULL,
+  not_run INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_map_runs_created ON map_runs(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS mcp_access_keys (
   id TEXT PRIMARY KEY,
@@ -1519,6 +1547,269 @@ def get_check_run(run_id: str) -> dict:
         return _run_dict(row)
 
 
+# ---------------------------------------------------------------- route maps
+#
+# A route's map is a road: Start, then stops and gates in order, then End. A stop is a rule set the agent must
+# follow. A gate is a requirement it must verify and give evidence for. A detour is a labelled bypass from one
+# point on the road to a later one. Agents get the road for every layer that applies (Global, Project, Sub-detour)
+# and report each stop. Nothing here can stop an agent from skipping a stop; what it can do is make a skip
+# visible: an unreported stop is "not run", and a failed stop blocks everything after it.
+
+def _number(value, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a number")
+    return round(float(value), 1)
+
+
+def _map_order(graph: dict) -> list[str]:
+    """Node IDs along the road, between Start and End. Empty when the road isn't complete."""
+    nodes = {n["id"]: n for n in graph["nodes"]}
+    ahead = {e["from"]: e["to"] for e in graph["edges"] if e["kind"] == "road"}
+    start = next((n["id"] for n in graph["nodes"] if n["type"] == "start"), None)
+    order, seen, current = [], set(), start
+    while current in ahead and current not in seen:
+        seen.add(current)
+        current = ahead[current]
+        if nodes[current]["type"] != "end":
+            order.append(current)
+    return order
+
+
+def _default_graph() -> dict:
+    return {"nodes": [{"id": "start", "type": "start", "title": "Start", "note": "", "item_id": "", "x": 0, "y": 0},
+                      {"id": "end", "type": "end", "title": "End", "note": "", "item_id": "", "x": 480, "y": 0}],
+            "edges": [{"id": "start-end", "from": "start", "to": "end", "kind": "road", "label": "", "reason": ""}]}
+
+
+def _clean_graph(conn, graph) -> tuple[dict, list[str]]:
+    """Check a map the user drew and return it cleaned, with the stop order along its road."""
+    if not isinstance(graph, dict):
+        raise ValueError("map must be an object with nodes and edges")
+    raw_nodes, raw_edges = graph.get("nodes"), graph.get("edges")
+    if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
+        raise ValueError("map nodes and edges must be lists")
+    if len(raw_nodes) > MAX_MAP_NODES:
+        raise ValueError(f"a map can have at most {MAX_MAP_NODES} stops")
+    if len(raw_edges) > MAX_MAP_EDGES:
+        raise ValueError(f"a map can have at most {MAX_MAP_EDGES} connections")
+    nodes, ids = [], set()
+    for raw in raw_nodes:
+        if not isinstance(raw, dict):
+            raise ValueError("each map node must be an object")
+        node_id = _text(raw, "id", 64, required=True)
+        if not MAP_ID.match(node_id):
+            raise ValueError("a node ID can only use letters, numbers, - and _")
+        if node_id in ids:
+            raise ValueError(f"node ID “{node_id}” is used twice")
+        ids.add(node_id)
+        kind = _choice(raw.get("type"), MAP_NODE_TYPES, "node type")
+        title = _text(raw, "title", MAX_TITLE, required=kind in ("stop", "gate")) or kind.title()
+        item_id = _text(raw, "item_id", 64)
+        if item_id and conn.execute("SELECT 1 FROM items WHERE id = ? AND status = 'active'", (item_id,)).fetchone() is None:
+            raise ValueError(f"“{title}” points to an item that doesn't exist or is retired")
+        nodes.append({"id": node_id, "type": kind, "title": title, "note": _text(raw, "note", MAX_TEXT), "item_id": item_id,
+                      "x": _number(raw.get("x", 0), "x"), "y": _number(raw.get("y", 0), "y")})
+    by_id = {n["id"]: n for n in nodes}
+    edges, edge_ids = [], set()
+    for raw in raw_edges:
+        if not isinstance(raw, dict):
+            raise ValueError("each connection must be an object")
+        edge_id = _text(raw, "id", 64, required=True)
+        if not MAP_ID.match(edge_id) or edge_id in edge_ids:
+            raise ValueError("each connection needs its own ID with only letters, numbers, - and _")
+        edge_ids.add(edge_id)
+        kind = _choice(raw.get("kind", "road"), MAP_EDGE_KINDS, "connection kind")
+        origin, target = _text(raw, "from", 64, required=True), _text(raw, "to", 64, required=True)
+        if origin not in by_id or target not in by_id:
+            raise ValueError("a connection points to a stop that isn't on the map")
+        if origin == target:
+            raise ValueError("a connection can't start and end at the same stop")
+        label = _text(raw, "label", MAX_TITLE, required=kind == "detour")
+        edges.append({"id": edge_id, "from": origin, "to": target, "kind": kind, "label": label, "reason": _text(raw, "reason", MAX_TEXT)})
+    starts, ends = [n for n in nodes if n["type"] == "start"], [n for n in nodes if n["type"] == "end"]
+    if len(starts) != 1 or len(ends) != 1:
+        raise ValueError("a map needs exactly one Start and one End")
+    out_count, in_count = {}, {}
+    for edge in (e for e in edges if e["kind"] == "road"):
+        out_count[edge["from"]] = out_count.get(edge["from"], 0) + 1
+        in_count[edge["to"]] = in_count.get(edge["to"], 0) + 1
+    for node_id, count in out_count.items():
+        if count > 1 or by_id[node_id]["type"] == "end":
+            raise ValueError(f"“{by_id[node_id]['title']}” has more than one road leaving it" if count > 1 else "nothing can come after End")
+    for node_id, count in in_count.items():
+        if count > 1 or by_id[node_id]["type"] == "start":
+            raise ValueError(f"“{by_id[node_id]['title']}” has more than one road into it" if count > 1 else "nothing can lead into Start")
+    graph = {"nodes": nodes, "edges": edges}
+    order = _map_order(graph)
+    reached = set(order) | {starts[0]["id"]}
+    if not any(e["kind"] == "road" and e["to"] == ends[0]["id"] for e in edges) or len(reached) + 1 != len(nodes):
+        lost = next((n for n in nodes if n["id"] not in reached and n["type"] != "end"), ends[0])
+        raise ValueError(f"“{lost['title']}” isn't on the road from Start to End. Connect every stop in one line.")
+    position = {node_id: index for index, node_id in enumerate([starts[0]["id"], *order, ends[0]["id"]])}
+    for edge in (e for e in edges if e["kind"] == "detour"):
+        if position[edge["to"]] - position[edge["from"]] < 2:
+            raise ValueError(f"detour “{edge['label']}” has to skip at least one stop and can only go forward")
+    return graph, order
+
+
+def _map_row(conn, route_ref: str):
+    route = _require_route(conn, route_ref)
+    return route, conn.execute("SELECT * FROM route_maps WHERE route_id = ?", (route["id"],)).fetchone()
+
+
+def _map_dict(route, row) -> dict:
+    graph = json.loads(row["graph_json"]) if row else _default_graph()
+    return {"route": {"id": route["id"], "name": route["name"], "scope": route["scope"]}, "graph": graph,
+            "order": _map_order(graph), "saved": row is not None, "updated_at": row["updated_at"] if row else None}
+
+
+def get_map(route_ref: str) -> dict:
+    with db() as conn:
+        route, row = _map_row(conn, route_ref)
+        return _map_dict(route, row)
+
+
+def save_map(route_ref: str, graph, actor: str = YOU) -> dict:
+    with db(write=True) as conn:
+        route = _require_route(conn, route_ref)
+        cleaned, _ = _clean_graph(conn, graph)
+        conn.execute(
+            "INSERT INTO route_maps (route_id, graph_json, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(route_id) DO UPDATE SET graph_json = excluded.graph_json, updated_at = excluded.updated_at",
+            (route["id"], json.dumps(cleaned), now_iso()),
+        )
+        return _map_dict(route, conn.execute("SELECT * FROM route_maps WHERE route_id = ?", (route["id"],)).fetchone())
+
+
+def _route_plan(conn, route_ref="", folder="", repo="", topic="", file="", url="") -> dict:
+    """The road for every layer that applies, Global first, with the detours each layer allows."""
+    layers = [row for row in _layers(conn, route_ref, folder, repo, topic, file, url) if not row["paused"]]
+    where = next((value for value in (repo, folder, file, url, topic) if value), "")
+    label = _require_route(conn, route_ref)["name"] if route_ref else (f"Route for {where}" if where else "Route")
+    plan = {"label": label, "routes": [r["name"] for r in layers], "stops": [], "detours": []}
+    for route in layers:
+        row = conn.execute("SELECT * FROM route_maps WHERE route_id = ?", (route["id"],)).fetchone()
+        if row is None:
+            plan["stops"].append({"id": f"{route['id']}:context", "route": route["name"], "type": "stop", "title": f"Follow {route['name']}",
+                                  "note": "Read this route's context with get_context and follow it.", "item": None})
+            continue
+        graph = json.loads(row["graph_json"])
+        nodes = {n["id"]: n for n in graph["nodes"]}
+        order = _map_order(graph)
+        for node_id in order:
+            node = nodes[node_id]
+            item = conn.execute("SELECT * FROM items WHERE id = ? AND status = 'active'", (node["item_id"],)).fetchone() if node["item_id"] else None
+            plan["stops"].append({
+                "id": f"{route['id']}:{node_id}", "route": route["name"], "type": node["type"], "title": node["title"], "note": node["note"],
+                "item": {"id": item["id"], "kind": item["kind"], "title": item["title"], "body": item["body"]} if item else None,
+            })
+        line = [next(n["id"] for n in graph["nodes"] if n["type"] == "start"), *order, next(n["id"] for n in graph["nodes"] if n["type"] == "end")]
+        for edge in (e for e in graph["edges"] if e["kind"] == "detour"):
+            a, b = line.index(edge["from"]), line.index(edge["to"])
+            plan["detours"].append({
+                "id": f"{route['id']}:{edge['id']}", "route": route["name"], "label": edge["label"], "reason": edge["reason"],
+                "from": f"{route['id']}:{edge['from']}" if a else "start", "to": f"{route['id']}:{edge['to']}" if b < len(line) - 1 else "end",
+                "from_title": nodes[edge["from"]]["title"], "to_title": nodes[edge["to"]]["title"],
+                "skips": [f"{route['id']}:{node_id}" for node_id in line[a + 1:b]],
+            })
+    return plan
+
+
+def plan_route(route_ref: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "", url: str = "") -> dict:
+    with db() as conn:
+        return _route_plan(conn, route_ref, folder, repo, topic, file, url)
+
+
+MAP_ICONS = {"pass": "✓", "fail": "✗", "detoured": "↷", "blocked": "⛔", "not_run": "?"}
+
+
+def _map_run_dict(row) -> dict:
+    results = json.loads(row["results_json"])
+    counts = {key: row[key] for key in ("passed", "failed", "detoured", "blocked", "not_run")}
+    outcome = "failed" if counts["failed"] else "incomplete" if counts["not_run"] else "passed"
+    parts = [f"{counts[key]} {word}" for key, word in (("passed", "passed"), ("failed", "failed"), ("blocked", "blocked"),
+                                                       ("not_run", "not run"), ("detoured", "detoured")) if counts[key]]
+    width = max((len(r["title"]) for r in results), default=0)
+    lines = [f"{row['label']}: {', '.join(parts) or 'no stops apply'}"]
+    lines += [f"  {MAP_ICONS[r['status']]} {r['title'].ljust(width)}  {_one_line(r['evidence'])}" for r in results]
+    return {"id": row["id"], "agent": row["agent"], "label": row["label"], "scope": json.loads(row["scope_json"]), "outcome": outcome,
+            **counts, "results": results, "created_at": row["created_at"], "summary": "\n".join(lines)}
+
+
+def record_route_run(key: dict, results, route_ref: str = "", folder: str = "", repo: str = "", topic: str = "", file: str = "",
+                     url: str = "") -> dict:
+    """Save an agent's report on a route's stops. A failed stop blocks the stops after it, and a stop it
+    didn't report is recorded as not run."""
+    if not isinstance(results, list) or not results:
+        raise ValueError("results must be a list of {stop, status, evidence} or {detour, evidence}")
+    if len(results) > MAX_RESULTS:
+        raise ValueError(f"report at most {MAX_RESULTS} results at once")
+    scope = {name: value for name, value in (("route", route_ref), ("folder", folder), ("repo", repo), ("topic", topic), ("file", file), ("url", url)) if value}
+    if not scope:
+        raise ValueError("Pass the same route, or folder, repo, topic, file or url, that you passed to get_route_plan.")
+    with db() as conn:
+        plan = _route_plan(conn, route_ref, folder, repo, topic, file, url)
+        stops = {s["id"]: s for s in plan["stops"]}
+        detours = {d["id"]: d for d in plan["detours"]}
+        verdicts: dict[str, tuple[str, str]] = {}
+        taken: dict[str, tuple[dict, str]] = {}
+        for result in results:
+            if not isinstance(result, dict):
+                raise ValueError("each result must be an object")
+            if result.get("detour"):
+                ref = _text(result, "detour", MAX_TITLE)
+                if ref not in detours:
+                    raise ValueError(f"“{ref}” isn't a detour on this route. Call get_route_plan for the list.")
+                if ref in taken:
+                    raise ValueError(f"detour “{detours[ref]['label']}” was reported twice")
+                why = _text(result, "evidence", MAX_TEXT)
+                if not why:
+                    raise ValueError(f"Say why detour “{detours[ref]['label']}” applies in evidence.")
+                taken[ref] = (detours[ref], why)
+                continue
+            ref = _text(result, "stop", MAX_TITLE, required=True)
+            if ref not in stops:
+                raise ValueError(f"“{ref}” isn't a stop on this route. Call get_route_plan for the list.")
+            status = _choice(str(result.get("status", "")).strip().lower(), MAP_REPORT_STATUSES, "status")
+            evidence = _text(result, "evidence", MAX_TEXT, required=stops[ref]["type"] == "gate") or "Acknowledged."
+            if ref in verdicts:
+                raise ValueError(f"“{stops[ref]['title']}” was reported twice")
+            verdicts[ref] = (status, evidence)
+        skipped: dict[str, str] = {}
+        for detour_ref, (found, why) in taken.items():
+            for stop_id in found["skips"]:
+                skipped.setdefault(stop_id, f"Detour “{found['label']}”: {why}")
+        for stop_id in verdicts:
+            if stop_id in skipped:
+                raise ValueError(f"“{stops[stop_id]['title']}” was detoured around, so don't report it.")
+        rows, failed_at = [], None
+        for stop in plan["stops"]:
+            status, evidence = verdicts.get(stop["id"], ("not_run", "No result was reported."))
+            if stop["id"] in skipped:
+                status, evidence = "detoured", skipped[stop["id"]]
+            elif failed_at:
+                status, evidence = "blocked", f"Not accepted: “{failed_at}” failed first. Fix it or take a detour."
+            elif status == "fail":
+                failed_at = stop["title"]
+            rows.append({"stop": stop["id"], "route": stop["route"], "title": stop["title"], "type": stop["type"], "status": status, "evidence": evidence})
+        counts = {key: sum(r["status"] == status for r in rows) for key, status in
+                  (("passed", "pass"), ("failed", "fail"), ("detoured", "detoured"), ("blocked", "blocked"), ("not_run", "not_run"))}
+        run_id, stamp = make_id(), now_iso()
+        conn.execute(
+            "INSERT INTO map_runs (id, key_id, agent, label, scope_json, results_json, passed, failed, detoured, blocked, not_run, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, key.get("id"), key.get("name") or "Agent", plan["label"], json.dumps(scope), json.dumps(rows),
+             counts["passed"], counts["failed"], counts["detoured"], counts["blocked"], counts["not_run"], stamp),
+        )
+        return _map_run_dict(conn.execute("SELECT * FROM map_runs WHERE id = ?", (run_id,)).fetchone())
+
+
+def list_route_runs(limit: int = 50) -> list[dict]:
+    limit = max(1, min(int(limit), 200))
+    with db() as conn:
+        return [_map_run_dict(row) for row in conn.execute("SELECT * FROM map_runs ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,))]
+
+
 # ---------------------------------------------------------------- access keys
 
 
@@ -1604,8 +1895,9 @@ def export_all() -> dict:
         targets = [_snapshot(r, TARGET_FIELDS) for r in conn.execute("SELECT * FROM targets ORDER BY created_at")]
         skips = [{key: r[key] for key in ("route_id", "check_id", "instead_id", "reason")} for r in conn.execute("SELECT * FROM check_skips ORDER BY created_at")]
         includes = [{"route_id": r["route_id"], "included_id": r["included_id"]} for r in conn.execute("SELECT * FROM route_includes ORDER BY created_at")]
+        maps = [{"route_id": r["route_id"], "graph": json.loads(r["graph_json"])} for r in conn.execute("SELECT * FROM route_maps ORDER BY updated_at")]
     return {"format": EXPORT_FORMAT, "exported_at": now_iso(), "routes": routes, "items": items, "targets": targets,
-            "skips": skips, "includes": includes}
+            "skips": skips, "includes": includes, "maps": maps}
 
 
 def import_all(payload: dict, actor: str = YOU) -> dict:
@@ -1616,8 +1908,9 @@ def import_all(payload: dict, actor: str = YOU) -> dict:
     if not all(isinstance(value, list) for value in (routes, items, targets)):
         raise ValueError("routes, items and targets must be lists")
     skips, includes = payload.get("skips") or [], payload.get("includes") or []
-    if not all(isinstance(value, list) for value in (skips, includes)):
-        raise ValueError("skips and includes must be lists")
+    maps = payload.get("maps") or []
+    if not all(isinstance(value, list) for value in (skips, includes, maps)):
+        raise ValueError("skips, includes and maps must be lists")
     with db() as conn:
         id_map: dict[str, str] = {}
         item_map: dict[str, str] = {}
@@ -1660,4 +1953,12 @@ def import_all(payload: dict, actor: str = YOU) -> dict:
                 raise ValueError("each include must name two routes in the export")
             conn.execute("INSERT OR IGNORE INTO route_includes (route_id, included_id, created_at) VALUES (?, ?, ?)",
                          (id_map[include["route_id"]], id_map[include["included_id"]], now_iso()))
-    return {"routes": len(id_map), "items": len(items), "targets": len(targets), "skips": len(skips), "includes": len(includes)}
+        for entry in maps:
+            if not isinstance(entry, dict) or entry.get("route_id") not in id_map or not isinstance(entry.get("graph"), dict):
+                raise ValueError("each map must belong to a route in the export")
+            graph = dict(entry["graph"])
+            graph["nodes"] = [dict(n, item_id=item_map.get(n.get("item_id") or "", "")) if isinstance(n, dict) else n for n in graph.get("nodes") or []]
+            cleaned, _ = _clean_graph(conn, graph)
+            conn.execute("INSERT INTO route_maps (route_id, graph_json, updated_at) VALUES (?, ?, ?)",
+                         (id_map[entry["route_id"]], json.dumps(cleaned), now_iso()))
+    return {"routes": len(id_map), "items": len(items), "targets": len(targets), "skips": len(skips), "includes": len(includes), "maps": len(maps)}

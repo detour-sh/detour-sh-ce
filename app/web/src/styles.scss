@@ -549,3 +549,117 @@ html[data-theme-custom] .cds--header {
     outline-offset: 1px;
   }
 }
+
+// Route map. React Flow draws the canvas; these rules point its colors at Carbon tokens.
+.dt-map-select {
+  max-width: 24rem;
+  margin: $spacing-05 0;
+}
+
+.dt-map-toolbar {
+  align-items: center;
+  margin-bottom: $spacing-05;
+}
+
+.dt-map-split {
+  margin-top: $spacing-03;
+}
+
+.dt-map-canvas {
+  height: 28rem;
+  background: $layer-01;
+  border: 1px solid $border-subtle-01;
+
+  .react-flow {
+    --xy-background-color: #{$layer-01};
+    --xy-background-pattern-color: #{$border-subtle-01};
+    --xy-edge-stroke: #{$text-secondary};
+    --xy-edge-stroke-selected: #{$focus};
+    --xy-connectionline-stroke: #{$focus};
+    --xy-handle-background-color: #{$icon-primary};
+    --xy-controls-button-background-color: #{$layer-02};
+    --xy-controls-button-background-color-hover: #{$layer-hover-02};
+    --xy-controls-button-color: #{$icon-primary};
+    --xy-controls-button-border-color: #{$border-subtle-01};
+    --xy-edge-label-background-color: #{$layer-02};
+    --xy-edge-label-color: #{$text-primary};
+  }
+
+  .react-flow__edge-textbg {
+    fill: $layer-02;
+  }
+
+  .react-flow__edge-text {
+    fill: $text-primary;
+    @include type-style('label-01');
+  }
+
+  .react-flow__controls-button svg {
+    fill: $icon-primary;
+  }
+
+  .dt-edge--detour .react-flow__edge-path {
+    stroke-dasharray: 6 4;
+    stroke: $support-warning;
+    stroke-width: 2;
+  }
+
+  .dt-edge--road .react-flow__edge-path {
+    stroke-width: 2;
+  }
+
+  .dt-handle--detour {
+    background: $support-warning;
+  }
+
+  .react-flow__handle {
+    width: $spacing-03;
+    height: $spacing-03;
+  }
+}
+
+.dt-node {
+  min-width: 9rem;
+  max-width: 13rem;
+  padding: $spacing-04 $spacing-05;
+  background: $layer-02;
+  border: 1px solid $border-strong-01;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  align-items: flex-start;
+
+  &.is-selected {
+    outline: 2px solid $focus;
+  }
+
+  &--gate {
+    border-left: 4px solid $support-error;
+  }
+
+  &--stop {
+    border-left: 4px solid $support-info;
+  }
+
+  &--start,
+  &--end {
+    border-radius: $spacing-06;
+  }
+}
+
+.dt-node-title {
+  @include type-style('heading-compact-01');
+  overflow-wrap: anywhere;
+}
+
+.dt-road-list {
+  padding-left: $spacing-05;
+
+  li {
+    margin-bottom: $spacing-03;
+  }
+}
+
+.dt-warning {
+  color: $text-error;
+}

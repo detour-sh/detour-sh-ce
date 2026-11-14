@@ -52,6 +52,10 @@ export const api = {
     request("POST", `/api/routes/${encodeURIComponent(routeId)}/includes/${encodeURIComponent(includedId)}/remove`, {}),
   checkRuns: () => request("GET", "/api/check-runs"),
 
+  routeMap: (id) => request("GET", `/api/routes/${encodeURIComponent(id)}/map`),
+  saveRouteMap: (id, graph) => request("PUT", `/api/routes/${encodeURIComponent(id)}/map`, { graph }),
+  mapRuns: () => request("GET", "/api/map-runs"),
+
   addTarget: (routeId, body) => request("POST", `/api/routes/${encodeURIComponent(routeId)}/targets`, body),
   removeTarget: (id) => request("POST", `/api/targets/${encodeURIComponent(id)}/remove`, {}),
 

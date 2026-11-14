@@ -13,7 +13,7 @@ import {
   SkipToContent,
   Tag,
 } from "@carbon/react";
-import { Activity, CheckmarkOutline, Connect, Flow, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
+import { Activity, CheckmarkOutline, Connect, Flow, Map as MapIcon, Settings, TaskApproved, UserAvatar } from "@carbon/icons-react";
 import { api } from "./api.js";
 import { useRouter } from "./router.jsx";
 import Review from "./pages/Review.jsx";
@@ -21,6 +21,7 @@ import RoutesPage from "./pages/Routes.jsx";
 import RouteDetail from "./pages/RouteDetail.jsx";
 import ActivityPage from "./pages/Activity.jsx";
 import ChecksPage from "./pages/Checks.jsx";
+import MapPage from "./pages/Map.jsx";
 import Connections from "./pages/Connections.jsx";
 import SettingsPage from "./pages/Settings.jsx";
 import NotFound from "./pages/NotFound.jsx";
@@ -40,6 +41,7 @@ export function usePageTitle(title) {
 const NAV = [
   { href: "/", label: "Review", icon: TaskApproved, match: (p) => p === "/" || p === "/review" },
   { href: "/routes", label: "Routes", icon: Flow, match: (p) => p.startsWith("/routes") },
+  { href: "/map", label: "Route map", icon: MapIcon, match: (p) => p === "/map" },
   { href: "/checks", label: "Check runs", icon: CheckmarkOutline, match: (p) => p === "/checks" },
   { href: "/activity", label: "Activity", icon: Activity, match: (p) => p === "/activity" },
 ];
@@ -55,6 +57,7 @@ function page(path) {
   // Keyed so moving between routes starts fresh; an open editor can't save into the route you left.
   if (routeMatch) return <RouteDetail key={routeMatch[1]} routeId={routeMatch[1]} />;
   if (path === "/checks") return <ChecksPage />;
+  if (path === "/map") return <MapPage />;
   if (path === "/activity") return <ActivityPage />;
   if (path === "/connections") return <Connections />;
   if (path === "/settings") return <SettingsPage />;

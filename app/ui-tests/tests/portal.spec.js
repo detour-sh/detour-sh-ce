@@ -131,12 +131,54 @@ test("a route is created and managed by hand", async ({ page }) => {
   await expect(page.getByRole("link", { name })).toBeVisible();
 });
 
+test("an agent follows a route map, takes a detour, and the run shows in the portal", async ({ page, request }) => {
+  const { route, token, folder } = await setup(request);
+  const node = (id, type, title, x) => ({ id, type, title, x, y: 0 });
+  const road = (from, to) => ({ id: `${from}-${to}`, from, to, kind: "road" });
+  const graph = {
+    nodes: [node("start", "start", "Start", 0), node("rules", "stop", "Project rules", 200), node("safety", "gate", "Safety review", 400), node("ship", "stop", "Ship", 600), node("end", "end", "End", 800)],
+    edges: [road("start", "rules"), road("rules", "safety"), road("safety", "ship"), road("ship", "end"),
+      { id: "d1", from: "rules", to: "ship", kind: "detour", label: "mvp deploy", reason: "No real users yet." }],
+  };
+  await api(request, "PUT", `/api/routes/${route.id}/map`, { graph });
+
+  const plan = await mcp(request, token, "get_route_plan", { folder });
+  const stops = plan.stops.filter((stop) => stop.route === route.name);
+  expect(stops.map((stop) => stop.title)).toEqual(["Project rules", "Safety review", "Ship"]);
+  const bypass = plan.detours[0];
+  const run = await mcp(request, token, "report_route_progress", {
+    folder,
+    results: [
+      ...plan.stops.filter((stop) => stop.route !== route.name).map((stop) => ({ stop: stop.id, status: "pass" })),
+      { stop: stops[0].id, status: "pass" },
+      { detour: bypass.id, evidence: "This is an MVP deploy" },
+      { stop: stops[2].id, status: "pass" },
+    ],
+  });
+  expect(run).toMatchObject({ outcome: "passed", detoured: 1 });
+
+  const errors = watchConsole(page);
+  await page.goto("/map");
+  await page.locator("#map-route").selectOption(route.id);
+  await expect(page.locator(".react-flow__node")).toHaveCount(5);
+  await page.getByRole("button", { name: "Add gate" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Security gate");
+  await page.getByRole("button", { name: "Save map" }).click();
+  await expect(page.getByText(/^Saved/)).toBeVisible();
+  expect((await api(request, "GET", `/api/routes/${route.id}/map`)).order).toHaveLength(4);
+
+  await page.getByRole("tab", { name: "Runs" }).click();
+  await expect(page.getByText(`Route for ${folder}`)).toBeVisible();
+  await expect(page.getByText("Detour “mvp deploy”: This is an MVP deploy").first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 for (const theme of ["light", "dark"]) {
   test(`every page renders cleanly in ${theme}`, async ({ page, request }, testInfo) => {
     const { route } = await setup(request);
     const errors = watchConsole(page);
     await page.addInitScript((value) => localStorage.setItem("detour-theme", value), theme);
-    for (const [label, path] of [["review", "/"], ["routes", "/routes"], ["route", `/routes/${route.id}`], ["activity", "/activity"], ["connections", "/connections"], ["settings", "/settings"]]) {
+    for (const [label, path] of [["review", "/"], ["routes", "/routes"], ["route", `/routes/${route.id}`], ["map", "/map"], ["activity", "/activity"], ["connections", "/connections"], ["settings", "/settings"]]) {
       await page.goto(path);
       await expect(page.locator("main h1")).toBeVisible();
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);

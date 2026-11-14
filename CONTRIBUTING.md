@@ -44,7 +44,10 @@ The portal follows Carbon so that it stays consistent and can be upgraded:
 
 - Use Carbon components. The only custom patterns are `ProposalCard`,
   `TargetList`, `HistoryList`, `CheckResults` and `ThemePicker` in
-  `app/web/src/components`.
+  `app/web/src/components`, and the route map canvas in `app/web/src/pages/Map.jsx`
+  (React Flow has no Carbon equivalent; its colors come from Carbon tokens in
+  `styles.scss`). Map editing logic lives in `app/web/src/mapGraph.js` and is
+  tested with `npm test`.
 - Themes are Carbon tokens. `app/web/src/theme.js` turns six colors into
   `--cds-*` variables, so don't restyle components for a theme. Change the
   palette or the derivation there, and run `npm test` in `app/web`. The tests
