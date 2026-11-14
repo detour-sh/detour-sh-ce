@@ -8,8 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 Detour 0.2 rebuilds the portal around one idea: agents propose, you decide.
 
+### Added
+
+- Themes. Settings now offers Carbon light and dark, six ready-made themes
+  (Ocean, Forest, Sunset, Aubergine, Midnight and High contrast), and a custom
+  theme where you pick six colors: primary, secondary, text, links, background
+  and header. Shades, borders and button labels are worked out from them, and
+  Settings warns when a pair is hard to read. Your choice stays in your
+  browser.
+
 ### Changed
 
+- Readability: lead text is 16px, labels are 14px, long paragraphs stop at
+  about 70 characters, Settings uses a narrower column, and tab content lines
+  up with the page title.
 - New portal built on IBM's Carbon Design System (React), in light and dark
   themes. It replaces the server-rendered pages.
 - "Detours" are now **routes**. A route applies wherever its targets match: a

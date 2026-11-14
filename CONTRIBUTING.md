@@ -36,7 +36,14 @@ with hot reload and sends API calls to the portal on port 3787.
 The portal follows Carbon so that it stays consistent and can be upgraded:
 
 - Use Carbon components. The only custom patterns are `ProposalCard`,
-  `TargetList`, `HistoryList` and `CheckResults` in `app/web/src/components`.
+  `TargetList`, `HistoryList`, `CheckResults` and `ThemePicker` in
+  `app/web/src/components`.
+- Themes are Carbon tokens. `app/web/src/theme.js` turns six colors into
+  `--cds-*` variables, so don't restyle components for a theme. Change the
+  palette or the derivation there, and run `npm test` in `app/web`. The tests
+  check that every preset has readable contrast (WCAG AA).
+- Type follows Carbon's scale: 16px (`body-02`) for lead text, 14px for UI and
+  labels, and about 70 characters at most per line of prose.
 - Use Carbon tokens for color, spacing and type in `styles.scss`. Don't
   hard-code colors, sizes or fonts.
 - The portal and the MCP server both go through `app/store.py`. Add behavior
