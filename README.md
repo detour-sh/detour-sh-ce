@@ -81,7 +81,7 @@ The examples below show the portal with sample data.
 Use a tagged release. `main` can change between releases.
 
 ```bash
-git clone --branch v0.2.0 https://github.com/detour-sh/detour-sh-ce.git
+git clone --branch v0.3.0 https://github.com/detour-sh/detour-sh-ce.git
 cd detour-sh-ce
 docker compose up -d --build
 ```
@@ -94,7 +94,7 @@ Each release publishes a signed image for amd64 and arm64. To run it instead
 of building locally:
 
 ```bash
-DETOUR_IMAGE=ghcr.io/detour-sh/detour-sh-ce:0.2.0 docker compose up -d --no-build
+DETOUR_IMAGE=ghcr.io/detour-sh/detour-sh-ce:0.3.0 docker compose up -d --no-build
 ```
 
 To check the signature first, run the `cosign verify` command from the
@@ -286,11 +286,11 @@ To upgrade, check out the new release tag and rebuild:
 
 ```bash
 git fetch --tags
-git checkout v0.2.0
+git checkout v0.3.0
 docker compose up -d --build
 ```
 
-Replace `v0.2.0` with the release you want. See [CHANGELOG.md](CHANGELOG.md)
+Replace `v0.3.0` with the release you want. See [CHANGELOG.md](CHANGELOG.md)
 for what changed. When an upgrade changes the database, Detour first saves a
 copy in the `backups` folder of the data volume and keeps the last five. If
 you go back to an older release after an upgrade, Detour won't start on the
