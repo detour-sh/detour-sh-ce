@@ -37,6 +37,11 @@ jobs:
         env:
           DETOUR_QUIET_HTTP: "true"
 
+      - name: Portal theme tests
+        # Plain Node, no install: the theme engine has no dependencies.
+        run: node --test
+        working-directory: app/web
+
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:

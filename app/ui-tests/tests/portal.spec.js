@@ -158,6 +158,34 @@ test("the theme choice persists", async ({ page }) => {
   await expect(page.locator("html")).toHaveClass(/cds--g10(\s|$)/);
 });
 
+test("a preset and a custom theme apply, warn about low contrast, and persist", async ({ page }) => {
+  const errors = watchConsole(page);
+  const token = (name) => page.evaluate((n) => document.documentElement.style.getPropertyValue(n), name);
+  await page.goto("/settings");
+
+  await page.getByText("Midnight", { exact: true }).click();
+  await expect(page.locator("html")).toHaveClass(/cds--g100/);
+  expect(await token("--cds-button-primary")).toBe("#2563eb");
+
+  await page.getByRole("button", { name: "Customize Midnight" }).click();
+  await page.getByRole("textbox", { name: "Primary", exact: true }).fill("#7c3aed");
+  expect(await token("--cds-button-primary")).toBe("#7c3aed");
+  await page.getByRole("textbox", { name: "Links", exact: true }).fill("#222222");
+  await expect(page.getByText("Links are hard to read on this background.")).toBeVisible();
+  await page.getByRole("textbox", { name: "Text", exact: true }).fill("#12");
+  await expect(page.getByText("Use a hex color such as #0f62fe.")).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme-custom", "true");
+  expect(await token("--cds-button-primary")).toBe("#7c3aed");
+
+  // Going back to a Carbon theme removes every override.
+  await page.getByText("Light", { exact: true }).click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-theme-custom", "true");
+  expect(await token("--cds-button-primary")).toBe("");
+  expect(errors, "console errors, including Content-Security-Policy violations").toEqual([]);
+});
+
 test("a new key is shown once and can be revoked", async ({ page }) => {
   const name = unique("Cursor");
   await page.goto("/connections");
