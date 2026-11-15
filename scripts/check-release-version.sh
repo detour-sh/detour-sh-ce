@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks that VERSION is the next patch after the latest released tag.
 # The next minor or major version passes only when the second argument is
-# "true". Skipped numbers always fail. See docs/decisions/0002-patch-releases-by-default.md.
+# "true". Skipped numbers always fail. See CONTRIBUTING.md, Releases.
 #
 # Usage: check-release-version.sh VERSION [MINOR_OR_MAJOR] < tag-refs
 # Reads existing tags on stdin, one per line (refs/tags/v1.2.3 or v1.2.3).
@@ -33,7 +33,7 @@ if [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -n1)" != "$versi
 fi
 
 if [ "$bigger" != "true" ]; then
-  echo "::error::The next patch after ${latest} is ${next_patch}. For ${version}, tick \"Minor or major release\" (see docs/decisions/0002-patch-releases-by-default.md)."
+  echo "::error::The next patch after ${latest} is ${next_patch}. For ${version}, tick \"Minor or major release\" (see CONTRIBUTING.md, Releases)."
   exit 1
 fi
 
