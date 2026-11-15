@@ -110,12 +110,23 @@ uv run --no-project --with pillow==11.3.0 python scripts/build_brand.py
 
 ## Releases
 
+Until 1.0, every release is a patch (0.3.1, 0.3.2, ...) unless the maintainer
+decides otherwise. Merged changes wait under `[Unreleased]` and go out together,
+not one release per pull request. Security fixes go out the same day. A minor
+release (0.x.0) is the maintainer's call. Suggest one when a release renames or
+removes an MCP tool or input, changes the export format, removes a setting, adds
+a schema migration, or adds features big enough to announce. See
+[decision 0002](docs/decisions/0002-patch-releases-by-default.md).
+
 1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new version
-   heading, and update the version in the README quick start.
+   heading, and update the version in the README quick start and in
+   `app/server.py`.
 2. Merge to `main` and wait for CI to pass.
 3. Run the **_manual:release** workflow on `main` with the version, such as
-   `0.2.0`. It tags the commit and starts the release. Pushing a `v*.*.*` tag
-   by hand works too.
+   `0.3.1`. It tags the commit and starts the release. It accepts only the next
+   patch after the latest tag. For a minor or major version, tick **Minor or
+   major release**. Pushing a `v*.*.*` tag by hand also works, but skips that
+   check.
 
 The release workflow runs the tests, publishes signed amd64 and arm64 images
 to GitHub Container Registry, and creates the GitHub release from the
