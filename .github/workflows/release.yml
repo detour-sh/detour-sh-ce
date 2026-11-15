@@ -48,7 +48,11 @@ jobs:
           grep -q "^## \[${VERSION}\] - " CHANGELOG.md || { echo "::error::CHANGELOG.md has no ${VERSION} section"; exit 1; }
           # Reuse the tag if an earlier run already made it on this commit, so a
           # failed start can be run again. A tag on any other commit is an error.
-          existing=$(gh api "repos/${GH_REPO}/git/ref/tags/v${VERSION}" --jq '.object.sha' 2>/dev/null || true)
+          # Test the exit status, not the output: on a 404 gh prints the error body
+          # to stdout and skips --jq, so the output alone looks like a tag.
+          if ! existing=$(gh api "repos/${GH_REPO}/git/ref/tags/v${VERSION}" --jq '.object.sha' 2>/dev/null); then
+            existing=""
+          fi
           if [ -z "$existing" ]; then
             gh api "repos/${GH_REPO}/git/refs" -f "ref=refs/tags/v${VERSION}" -f "sha=${GITHUB_SHA}"
           elif [ "$existing" != "$GITHUB_SHA" ]; then

@@ -6,11 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
-
-- Change password in hosted mode (Settings, Password). It needs the current password,
-  shares the sign-in lockout, and signs out every other browser.
-
 ## [0.3.0] - 2026-11-14
 
 ### Security
@@ -28,6 +23,8 @@ All notable changes to this project are documented here. The format follows
   start without a sign-in, an `https://` address and MCP access keys. New admin
   commands: `server.py setup-code` and `server.py reset-owner --yes`. Local mode
   is unchanged and still has no sign-in.
+- Change password in hosted mode (Settings, Password). It needs the current password,
+  shares the sign-in lockout, and signs out every other browser.
 - Themes. Settings now offers Carbon light and dark, six ready-made themes
   (Ocean, Forest, Sunset, Aubergine, Midnight and High contrast), and a custom
   theme where you pick six colors: primary, secondary, text, links, background
