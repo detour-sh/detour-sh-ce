@@ -125,8 +125,13 @@ a schema migration, or adds features big enough to announce. See
 3. Run the **_manual:release** workflow on `main` with the version, such as
    `0.3.1`. It tags the commit and starts the release. It accepts only the next
    patch after the latest tag. For a minor or major version, tick **Minor or
-   major release**. Pushing a `v*.*.*` tag by hand also works, but skips that
-   check.
+   major release**. Pushing a `v*.*.*` tag by hand also works for a patch. The
+   run on the tag repeats the checks, and won't publish a minor or major
+   version from a hand-pushed tag.
+
+Every release run checks that `CHANGELOG.md`, `VERSION` in `app/server.py` and
+the README's install commands all name the version, and stops before publishing
+if any of them don't.
 
 The release workflow runs the tests, publishes signed amd64 and arm64 images
 to GitHub Container Registry, and creates the GitHub release from the

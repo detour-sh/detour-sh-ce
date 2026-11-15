@@ -50,8 +50,8 @@ jobs:
 
       - name: Tag this commit and start the release on the tag
         run: |
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version must look like 0.2.0"; exit 1; }
-          grep -q "^## \[${VERSION}\] - " CHANGELOG.md || { echo "::error::CHANGELOG.md has no ${VERSION} section"; exit 1; }
+          # CHANGELOG.md, app/server.py and the README must all name this version.
+          bash scripts/check-version-match.sh "$VERSION"
           # Patch releases by default (docs/decisions/0002-patch-releases-by-default.md).
           # pipefail, so a failed tag lookup stops here instead of reading as "no releases".
           set -o pipefail
@@ -69,16 +69,33 @@ jobs:
           elif [ "$existing" != "$GITHUB_SHA" ]; then
             echo "::error::v${VERSION} already exists on a different commit (${existing})"; exit 1
           fi
-          gh workflow run release.yml --ref "v${VERSION}" -f "version=${VERSION}"
+          gh workflow run release.yml --ref "v${VERSION}" -f "version=${VERSION}" -f "minor_or_major=${MINOR_OR_MAJOR}"
 
+  # Runs on every tag run, however the tag was made, and publish waits for it.
+  # A hand-pushed tag gets the same version checks as a release started from
+  # Actions. A hand-pushed minor or major tag is refused: start those from
+  # Actions with "Minor or major release" ticked.
   test:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      MINOR_OR_MAJOR: ${{ inputs.minor_or_major || false }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Check the version
+        run: |
+          set -o pipefail
+          version="${TAG#v}"
+          bash scripts/check-version-match.sh "$version"
+          gh api --paginate "repos/${GH_REPO}/git/matching-refs/tags/v" --jq '.[].ref' \
+            | bash scripts/check-release-version.sh "$version" "$MINOR_OR_MAJOR"
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:

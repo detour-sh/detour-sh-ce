@@ -39,7 +39,9 @@ make our own.
 - Version numbers grow slowly, and a minor bump tells users to read the notes.
 - A patch release can add a schema migration if the owner doesn't want a minor for it. The
   release notes must then say that going back to an earlier patch won't work.
-- Pushing a `v*.*.*` tag by hand skips the check. Start releases from Actions.
+- The run on the tag repeats the check, so a tag pushed by hand can't skip it, and a
+  hand-pushed minor or major tag won't publish. A bad tag pushed by hand stays, because
+  the tag ruleset blocks deleting tags. Start releases from Actions.
 
 ## Revisit when
 
