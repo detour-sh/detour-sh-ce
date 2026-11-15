@@ -11,9 +11,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, such as 0.2.0. Must be in CHANGELOG.md."
+        description: "Version to release, such as 0.3.1. Must be in CHANGELOG.md."
         required: true
         type: string
+      minor_or_major:
+        description: "Minor or major release. Leave off for a patch (see docs/decisions/0002)."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,6 +42,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ inputs.version }}
+      MINOR_OR_MAJOR: ${{ inputs.minor_or_major }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,6 +52,11 @@ jobs:
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version must look like 0.2.0"; exit 1; }
           grep -q "^## \[${VERSION}\] - " CHANGELOG.md || { echo "::error::CHANGELOG.md has no ${VERSION} section"; exit 1; }
+          # Patch releases by default (docs/decisions/0002-patch-releases-by-default.md).
+          # pipefail, so a failed tag lookup stops here instead of reading as "no releases".
+          set -o pipefail
+          gh api --paginate "repos/${GH_REPO}/git/matching-refs/tags/v" --jq '.[].ref' \
+            | bash scripts/check-release-version.sh "$VERSION" "$MINOR_OR_MAJOR"
           # Reuse the tag if an earlier run already made it on this commit, so a
           # failed start can be run again. A tag on any other commit is an error.
           # Test the exit status, not the output: on a 404 gh prints the error body
