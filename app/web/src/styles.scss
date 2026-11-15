@@ -66,6 +66,14 @@ html[data-theme-custom] .cds--header {
   padding: $spacing-09 $spacing-05;
 }
 
+.dt-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-05;
+  max-width: 26rem;
+  margin-bottom: $spacing-05;
+}
+
 .dt-auth-card {
   width: 100%;
   max-width: 26rem;

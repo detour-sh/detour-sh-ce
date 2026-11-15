@@ -161,6 +161,65 @@ class SignInTests(AuthTestCase):
             self.assertIsNotNone(store.get_route(route))
 
 
+class ChangePasswordTests(AuthTestCase):
+    NEW = "a brand new passphrase"
+
+    def setUp(self):
+        super().setUp()
+        self.claim()
+        self.mine = auth.sign_in({"password": "correct horse battery"}, "this browser")
+        self.other = auth.sign_in({"password": "correct horse battery"}, "another browser")
+        self.my_id = auth.session_for_token(self.mine)["id"]
+
+    def change(self, **overrides):
+        payload = {"current_password": "correct horse battery", "new_password": self.NEW, "new_password_confirm": self.NEW}
+        payload.update(overrides)
+        return auth.change_password(payload, self.my_id)
+
+    def test_new_password_works_and_old_one_stops(self):
+        self.change()
+        self.assertIsNotNone(auth.session_for_token(auth.sign_in({"password": self.NEW}, "t")))
+        with self.assertRaises(auth.AuthError):
+            auth.sign_in({"password": "correct horse battery"}, "t")
+
+    def test_other_browsers_are_signed_out_but_this_one_stays(self):
+        self.change()
+        self.assertIsNotNone(auth.session_for_token(self.mine))
+        self.assertIsNone(auth.session_for_token(self.other))
+
+    def test_wrong_current_password_is_refused_and_changes_nothing(self):
+        with self.assertRaises(auth.AuthError) as ctx:
+            self.change(current_password="not the password at all")
+        self.assertEqual(ctx.exception.status, 403)
+        self.assertIsNotNone(auth.session_for_token(self.other))
+        self.assertIsNotNone(auth.sign_in({"password": "correct horse battery"}, "t"))
+
+    def test_wrong_current_passwords_share_the_sign_in_lockout(self):
+        for _ in range(auth.SIGN_IN_FREE_ATTEMPTS):
+            with self.assertRaises(auth.AuthError):
+                self.change(current_password="not the password at all")
+        with self.assertRaises(auth.AuthError) as ctx:
+            self.change()  # even the right current password is refused while locked
+        self.assertEqual(ctx.exception.status, 429)
+        with self.assertRaises(auth.AuthError) as ctx:
+            auth.sign_in({"password": "correct horse battery"}, "t")
+        self.assertEqual(ctx.exception.status, 429)
+
+    def test_bad_new_passwords_are_refused_and_change_nothing(self):
+        for overrides in ({"new_password": "short", "new_password_confirm": "short"},
+                          {"new_password_confirm": "does not match this one"},
+                          {"new_password": "correct horse battery", "new_password_confirm": "correct horse battery"}):
+            with self.subTest(overrides=list(overrides.values())[0]), self.assertRaises(ValueError):
+                self.change(**overrides)
+        self.assertIsNotNone(auth.session_for_token(self.other))
+        self.assertIsNotNone(auth.sign_in({"password": "correct horse battery"}, "t"))
+
+    def test_non_string_current_password_is_refused(self):
+        for bad in (None, 123, ["x"], "x" * 1000):
+            with self.subTest(bad=str(bad)[:5]), self.assertRaises(auth.AuthError):
+                self.change(current_password=bad)
+
+
 class CookieTests(unittest.TestCase):
     def test_cookie_flags(self):
         plain = auth.session_cookie("tok", secure=False)

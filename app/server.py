@@ -343,7 +343,7 @@ class DetourHandler(BaseHTTPRequestHandler):
         action = path.removeprefix("/api/auth/")
         if action == "status" and method == "GET":
             return self.json(self.auth_status())
-        if not HOSTING.hosted or method != "POST" or action not in ("setup", "sign-in", "sign-out"):
+        if not HOSTING.hosted or method != "POST" or action not in ("setup", "sign-in", "sign-out", "password"):
             return self.json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         body = self.body_json()
         secure = HOSTING.secure_cookie
@@ -351,6 +351,12 @@ class DetourHandler(BaseHTTPRequestHandler):
         if action == "sign-out":
             auth.sign_out(auth.read_cookie(self.headers.get("cookie"), auth.SESSION_COOKIE))
             return self.json(self.auth_status(signed_in=False), headers={"set-cookie": auth.cleared_cookie(secure)})
+        if action == "password":
+            session = self.current_session()
+            if not session:
+                return self.json({"error": "sign in required", "setup_required": False}, HTTPStatus.UNAUTHORIZED)
+            auth.change_password(body, session["id"])
+            return self.json(self.auth_status(signed_in=True))
         if action == "setup":
             token, status = auth.claim_owner(body, label), HTTPStatus.CREATED
         else:

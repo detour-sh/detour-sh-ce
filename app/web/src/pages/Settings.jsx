@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Button, InlineNotification } from "@carbon/react";
 import { Download, Upload } from "@carbon/icons-react";
+import ChangePassword from "../components/ChangePassword.jsx";
 import ThemePicker from "../components/ThemePicker.jsx";
 import { api } from "../api.js";
 import { useSession, usePageTitle } from "../App.jsx";
@@ -41,6 +42,8 @@ export default function SettingsPage() {
           <h2 id="appearance-heading">Appearance</h2>
           <ThemePicker />
         </section>
+
+        {hosted ? <ChangePassword /> : null}
 
         <section className="dt-tile" aria-labelledby="data-heading">
           <h2 id="data-heading">Your data</h2>

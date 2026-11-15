@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Change password in hosted mode (Settings, Password). It needs the current password,
+  shares the sign-in lockout, and signs out every other browser.
+
 ## [0.3.0] - 2026-11-14
 
 ### Security

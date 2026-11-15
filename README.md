@@ -242,6 +242,7 @@ How it works:
   `HttpOnly`, `SameSite=Strict` and `Secure`, lasts 30 days (7 idle), and Detour sends
   `Strict-Transport-Security`. Five wrong passwords lock sign-in for 30 seconds, then
   the wait doubles up to 15 minutes.
+- **Change your password** under Settings, Password. It signs out every other browser.
 - **Lost the code or the password?** On the server, run
   `docker compose exec detour python /app/server.py setup-code` (before setup) or
   `docker compose exec detour python /app/server.py reset-owner --yes` (after). Your

@@ -298,6 +298,28 @@ def sign_out(token: str | None) -> None:
         conn.execute("UPDATE owner_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL", (store.now_iso(), hash_secret(token)))
 
 
+def change_password(payload: dict, current_session_id: str) -> None:
+    """Replace the password after checking the current one, then sign out every other browser.
+
+    Wrong current passwords count toward the same lockout as sign-in, so this can't be used to guess.
+    """
+    current = payload.get("current_password")
+    with THROTTLE.attempt_lock:
+        THROTTLE.check()
+        with store.db() as conn:
+            row = conn.execute("SELECT password_hash FROM owner WHERE id = 1").fetchone()
+        if not row or not isinstance(current, str) or len(current) > PASSWORD_MAX_LENGTH or not verify_password(current, row["password_hash"]):
+            THROTTLE.failed()
+            raise AuthError("Current password is incorrect.", HTTPStatus.FORBIDDEN)
+        THROTTLE.reset()
+    password = validate_new_password(payload.get("new_password"), payload.get("new_password_confirm"))
+    if hmac.compare_digest(password, current):
+        raise ValueError("new password must be different from the current one")
+    with store.db() as conn:
+        conn.execute("UPDATE owner SET password_hash = ?, updated_at = ? WHERE id = 1", (hash_password(password), store.now_iso()))
+        conn.execute("UPDATE owner_sessions SET revoked_at = ? WHERE id != ? AND revoked_at IS NULL", (store.now_iso(), current_session_id))
+
+
 def reset_owner() -> str:
     """Remove the owner and every session, keep all saved context, and return a new setup code."""
     with store.db() as conn:
