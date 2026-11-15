@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       minor_or_major:
-        description: "Minor or major release. Leave off for a patch (see docs/decisions/0002)."
+        description: "Minor or major release. Leave off for a patch (see CONTRIBUTING.md, Releases)."
         required: false
         type: boolean
         default: false
@@ -52,7 +52,7 @@ jobs:
         run: |
           # CHANGELOG.md, app/server.py and the README must all name this version.
           bash scripts/check-version-match.sh "$VERSION"
-          # Patch releases by default (docs/decisions/0002-patch-releases-by-default.md).
+          # Patch releases by default (see CONTRIBUTING.md, Releases).
           # pipefail, so a failed tag lookup stops here instead of reading as "no releases".
           set -o pipefail
           gh api --paginate "repos/${GH_REPO}/git/matching-refs/tags/v" --jq '.[].ref' \

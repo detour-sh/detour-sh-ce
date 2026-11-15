@@ -142,9 +142,8 @@ Sub-detour.
 
 ## Checks
 
-You won't read every line an agent writes. A **check** says what has to be
-true, and the agent tells you whether it is: pass or fail, with the evidence it
-looked at.
+A **check** is a requirement an agent verifies before it finishes a task. The
+agent reports each check as pass or fail, with the evidence it looked at.
 
 Add a check to a route like any other item. Its title names it and its text
 says what must hold, for example *env list check: the project defines dev,
@@ -193,7 +192,7 @@ Set these variables before running `docker compose up`:
 |---|---|---|
 | `DETOUR_USER_NAME` | `Local user` | Display name shown in the portal. |
 | `DETOUR_ENABLE_NESTED_DETOURS` | `false` | Set to `true` to allow Sub-detours. |
-| `DETOUR_ALLOW_PUBLIC_CLIENTS` | `false` | Leave as `false`. Detour has no sign-in, so it answers `403` to any client on a public IP address. Setting `true` turns that off. |
+| `DETOUR_ALLOW_PUBLIC_CLIENTS` | `false` | When `false`, Detour answers `403` to clients on public IP addresses. See [Network access](#network-access). |
 | `DETOUR_HOSTED` | `false` | Run on a server with a sign-in. See [Run Detour on a server](#run-detour-on-a-server). |
 | `DETOUR_PUBLIC_URL` | empty | The `https://` address people open. Required when `DETOUR_HOSTED=true`, refused otherwise. |
 | `DETOUR_MCP_PUBLIC_URL` | derived | The `https://` address agents use for MCP, if it isn't `<public host>:3788`. |
@@ -208,25 +207,24 @@ DETOUR_USER_NAME=Alex docker compose up -d --build
 In PowerShell, set `$env:DETOUR_USER_NAME="Alex"` first, then run
 `docker compose up -d --build`.
 
-## Keep it local
+## Network access
 
-The ports are bound to `127.0.0.1` on purpose. Don't expose ports 3787 or 3788
-through a reverse proxy, tunnel, or port forward.
+By default, Detour runs in local mode, with no sign-in:
 
-As a second safeguard, Detour refuses any client that connects from a public IP
-address (`403`), even if someone publishes the port with
-`docker run -p 3787:3787` or edits the Compose file. Loopback, private and
-Tailscale addresses are allowed. A reverse proxy or tunnel on the same host looks
-like a private address, so this does not make those safe. Always run Detour with
-the Compose file as shipped, and don't set `DETOUR_ALLOW_PUBLIC_CLIENTS=true`.
+- The Compose file binds ports 3787 (portal) and 3788 (MCP) to `127.0.0.1`.
+- Detour answers `403` to clients on public IP addresses, even if a port is
+  published another way, such as `docker run -p 3787:3787`. Loopback, private
+  and Tailscale addresses are allowed.
+- A reverse proxy or tunnel on the same host appears as a private address. To
+  make Detour reachable from other machines, use
+  [hosted mode](#run-detour-on-a-server) instead.
 
 ## Run Detour on a server
 
-Most people should skip this. Detour is built to run on your own computer. If you
-do want it on a server (a VM, or a container service), turn on hosted mode. It adds
-a sign-in and makes Detour accept your public address.
+Hosted mode runs Detour on a server, such as a VM or a container service. It adds
+a sign-in and serves the portal at your public address.
 
-Hosted mode refuses to start unless it is configured safely:
+Hosted mode doesn't start unless all of the following are true:
 
 - `DETOUR_HOSTED=true` and `DETOUR_PUBLIC_URL=https://detour.example.com` are both
   required. `DETOUR_PUBLIC_URL` without `DETOUR_HOSTED` is an error, and plain `http://`
@@ -251,17 +249,40 @@ How it works:
 
 What you provide:
 
-1. **HTTPS.** Put a TLS-terminating proxy or load balancer in front (Caddy, nginx, an
-   AWS load balancer, Cloudflare). It must pass the `Host` header through unchanged and
-   forward to port 3787 (portal) and 3788 (MCP). Keep the Compose ports on `127.0.0.1`
-   if the proxy runs on the same machine.
-2. **Local disk for the data volume.** Detour uses SQLite. Use block storage (a normal
-   disk or EBS), not network file storage such as NFS or EFS, and back it up.
-3. **The firewall.** Allow only 443 (and your MCP port) from the internet. Never open 3787
-   or 3788 directly.
+1. **HTTPS.** A TLS-terminating proxy or load balancer in front of Detour, such as
+   Caddy, nginx, an AWS load balancer or Cloudflare. It passes the `Host` header
+   through unchanged and forwards to port 3787 (portal) and 3788 (MCP). If the proxy
+   runs on the same machine, keep the Compose ports on `127.0.0.1`.
+2. **Local disk for the data volume.** Detour uses SQLite, which needs block storage,
+   such as a local disk or EBS. Network file storage, such as NFS or EFS, isn't
+   supported. Back up the volume.
+3. **A firewall.** Allow only port 443, and your MCP port if it's different, from the
+   internet. Ports 3787 and 3788 stay closed.
 
-In hosted mode the "refuse public clients" safeguard is off, because behind a proxy
-every request looks private. The sign-in and access keys are what protect your data.
+In hosted mode, Detour doesn't check client addresses, because requests arrive through
+the proxy. The sign-in protects the portal, and access keys protect MCP.
+
+## Security
+
+Detour includes these protections:
+
+- **Access keys:** each AI tool connects with its own key, which you can make
+  read-only or revoke at any time.
+- **Review:** agents can't change context directly. Each change is a proposal
+  that follows the route's review policy. Changes are recorded under
+  **Activity** and can be undone.
+- **Network:** in local mode, the Compose file publishes Detour's ports on
+  `127.0.0.1` only, and Detour refuses clients on public IP addresses. Hosted mode adds an owner sign-in and requires
+  HTTPS. See [Network access](#network-access) and
+  [Run Detour on a server](#run-detour-on-a-server).
+- **Your data:** everything is stored in your Docker volume. Detour sends no
+  telemetry.
+- **Releases:** images are built for amd64 and arm64 and signed with Sigstore.
+  Each release includes an SBOM, a checksums file and their signatures, and the
+  release notes show how to verify them. Dependencies are pinned, and every
+  change is scanned before it's merged.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Data, backup, and upgrades
 

@@ -110,13 +110,11 @@ uv run --no-project --with pillow==11.3.0 python scripts/build_brand.py
 
 ## Releases
 
-Until 1.0, every release is a patch (0.3.1, 0.3.2, ...) unless the maintainer
-decides otherwise. Merged changes wait under `[Unreleased]` and go out together,
-not one release per pull request. Security fixes go out the same day. A minor
-release (0.x.0) is the maintainer's call. Suggest one when a release renames or
-removes an MCP tool or input, changes the export format, removes a setting, adds
-a schema migration, or adds features big enough to announce. See
-[decision 0002](docs/decisions/0002-patch-releases-by-default.md).
+Until 1.0, releases are patch versions (0.3.1, 0.3.2, ...). Merged changes are
+listed under `[Unreleased]` and released together. Security fixes are released
+as soon as they're ready. Maintainers decide when to make a minor release
+(0.x.0). It usually follows a change to MCP tools or their inputs, the export
+format, settings, or the database schema.
 
 1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new version
    heading, and update the version in the README quick start and in
